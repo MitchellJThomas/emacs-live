@@ -1,8 +1,8 @@
 # git-gutter.el
 
-[![circleci badge][circleci-badge]][circleci-link]
 [![melpa badge][melpa-badge]][melpa-link]
 [![melpa stable badge][melpa-stable-badge]][melpa-stable-link]
+[![gh actions badge][gh-actions-badge]][gh-actions-link]
 
 ## Introduction
 
@@ -26,18 +26,18 @@
 
 ## Requirements
 
-* Emacs 24 or higher
+* Emacs 25.1 or higher
 * [Git](http://git-scm.com/)(1.7.0 or higher)
 
 
 ## git-gutter.el vs [git-gutter-fringe.el](https://github.com/syohex/emacs-git-gutter-fringe)
 
-|                      | git-gutter.el   | git-gutter-fringe.el |
-|:---------------------|:---------------:|:--------------------:|
-| Work in tty frame    | OK              | NG                   |
-| Work with linum-mode | OK(experimental)| OK                   |
-| Show on right side   | NG              | OK                   |
-| More configurable    | OK              | NG                   |
+|                      | git-gutter.el     | git-gutter-fringe.el |
+|:---------------------|:-----------------:|:--------------------:|
+| Work in tty frame    | OK                | unsupported          |
+| Work with linum-mode | OK(experimental)  | OK                   |
+| Show on right side   | unsupported       | OK                   |
+| configurable         | more configurable | less configurable    |
 
 
 ## Installation
@@ -377,11 +377,11 @@ code you changed etc. To display them in mode-line is also useful.
 
 #### `(git-gutter:buffer-hunks)`
 
-Cound unstaged hunks in current buffer.
+Count unstaged hunks in current buffer.
 
 #### `(git-gutter:all-hunks)`
 
-Cound unstaged hunks in all buffers
+Count unstaged hunks in all buffers
 
 #### `(git-gutter:statistic)`
 
@@ -409,7 +409,7 @@ However git-gutter-plus updates diff information synchronously.
 
 [melpa-link]: http://melpa.org/#/git-gutter
 [melpa-stable-link]: http://stable.melpa.org/#/git-gutter
-[circleci-link]: https://app.circleci.com/pipelines/github/emacsorphanage/git-gutter
+[gh-actions-link]: https://github.com/emacsorphanage/git-gutter/actions
 [melpa-badge]: http://melpa.org/packages/git-gutter-badge.svg
 [melpa-stable-badge]: http://stable.melpa.org/packages/git-gutter-badge.svg
-[circleci-badge]: https://img.shields.io/circleci/project/github/emacsorphanage/git-gutter.svg
+[gh-actions-badge]: https://github.com/emacsorphanage/git-gutter/workflows/CI/badge.svg

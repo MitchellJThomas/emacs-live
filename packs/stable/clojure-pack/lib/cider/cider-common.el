@@ -1,6 +1,6 @@
 ;;; cider-common.el --- Common use functions         -*- lexical-binding: t; -*-
 
-;; Copyright © 2015-2020  Artur Malabarba
+;; Copyright © 2015-2023  Artur Malabarba
 
 ;; Author: Artur Malabarba <bruce.connor.am@gmail.com>
 
@@ -25,10 +25,9 @@
 ;;; Code:
 
 (require 'subr-x)
-(require 'cider-compat)
 (require 'nrepl-dict)
 (require 'cider-util)
-(require 'etags) ; for find-tags-marker-ring
+(require 'xref)
 (require 'tramp)
 
 (defcustom cider-prompt-for-symbol nil
@@ -61,7 +60,7 @@ Optionally invert the value, if INVERT is truthy."
 Otherwise attempt to use the symbol at point for the command, and only
 prompt if that throws an error.
 
-INVERT is used to invert the semantics of the function `cider--should-prompt-for-symbol'."
+INVERT inverts the semantics of the function `cider--should-prompt-for-symbol'."
   (if (cider--should-prompt-for-symbol invert)
       #'cider-read-symbol-name
     #'cider-try-symbol-at-point))
@@ -137,7 +136,7 @@ The default value means:
 - If the target file is already visible in a window, reuse it (switch to it).
 - Otherwise, open the target buffer in the current window.
 
-For further details, see https://docs.cider.mx/cider/repl/configuration.html#_control_what_window_to_use_when_jumping_to_a_definition"
+For further details, see https://docs.cider.mx/cider/config/basic_config.html#control-what-window-to-use-when-jumping-to-a-definition"
   :type 'sexp
   :group 'cider
   :package-version '(cider . "0.24.0"))
@@ -151,7 +150,7 @@ If a symbol, `cider-jump-to' searches for something that looks like the
 symbol's definition in the file.
 If OTHER-WINDOW is non-nil don't reuse current window."
   (with-no-warnings
-    (ring-insert find-tag-marker-ring (point-marker)))
+    (xref-push-marker-stack))
   (if other-window
       (pop-to-buffer buffer 'display-buffer-pop-up-window)
     (pop-to-buffer buffer cider-jump-to-pop-to-buffer-actions))
@@ -227,8 +226,8 @@ create a valid path."
         (match-string 1 filename)
       filename)))
 
-(defun cider-make-tramp-prefix (method user host)
-  "Constructs a Tramp file prefix from METHOD, USER, HOST.
+(defun cider-make-tramp-prefix (method user host &optional port)
+  "Constructs a Tramp file prefix from METHOD, USER, HOST, PORT.
 It originated from Tramp's `tramp-make-tramp-file-name'.  The original be
 forced to make full file name with `with-parsed-tramp-file-name', not providing
 prefix only option."
@@ -241,6 +240,8 @@ prefix only option."
             (if (string-match tramp-ipv6-regexp host)
                 (concat tramp-prefix-ipv6-format host tramp-postfix-ipv6-format)
               host))
+          (when port
+            (concat "#" port))
           tramp-postfix-host-format))
 
 (defun cider-tramp-prefix (&optional buffer)
@@ -254,7 +255,7 @@ if BUFFER is local."
     (when (tramp-tramp-file-p name)
       (with-parsed-tramp-file-name name v
         (with-no-warnings
-          (cider-make-tramp-prefix v-method v-user v-host))))))
+          (cider-make-tramp-prefix v-method v-user v-host v-port))))))
 
 (defun cider--client-tramp-filename (name &optional buffer)
   "Return the tramp filename for path NAME relative to BUFFER.
@@ -264,7 +265,8 @@ otherwise, nil."
   (let* ((buffer (or buffer (current-buffer)))
          (name (replace-regexp-in-string "^file:" "" name))
          (name (concat (cider-tramp-prefix buffer) name)))
-    (if (tramp-handle-file-exists-p name)
+    (if (and (tramp-tramp-file-p name)
+             (tramp-handle-file-exists-p name))
         name)))
 
 (defun cider--server-filename (name)
@@ -277,29 +279,45 @@ otherwise, nil."
 (defcustom cider-path-translations nil
   "Alist of path prefixes to path prefixes.
 Useful to intercept the location of a path in a container (or virtual
-machine) and translate to the oringal location.  If your project is located
+machine) and translate to the original location.  If your project is located
 at \"~/projects/foo\" and the src directory of foo is mounted at \"/src\"
 in the container, the alist would be `((\"/src\" \"~/projects/foo/src\"))."
   :type '(alist :key-type string :value-type string)
   :group 'cider
   :package-version '(cider . "0.23.0"))
 
-(defun cider--translate-path (path direction)
-  "Attempt to translate the PATH in the given DIRECTION.
+(defun cider--translate-path (path direction &optional return-all)
+  "Attempt to translate the PATH in the given DIRECTION, optionally RETURN-ALL.
 Looks at `cider-path-translations' for (container . host) alist of path
-prefixes and translates PATH from container to host or viceversa depending on
+prefixes and translates PATH from container to host or vice-versa depending on
 whether DIRECTION is 'from-nrepl or 'to-nrepl."
   (seq-let [from-fn to-fn path-fn] (cond ((eq direction 'from-nrepl) '(car cdr identity))
                                          ((eq direction 'to-nrepl) '(cdr car expand-file-name)))
-    (let ((path (funcall path-fn path)))
-      (seq-some (lambda (translation)
-                  (let ((prefix (file-name-as-directory (expand-file-name (funcall from-fn translation)))))
-                    (when (string-prefix-p prefix path)
-                      (replace-regexp-in-string (format "^%s" (regexp-quote prefix))
-                                                (file-name-as-directory
-                                                 (expand-file-name (funcall to-fn translation)))
-                                                path))))
-                cider-path-translations))))
+    (let ((f (lambda (translation)
+               (let ((path (funcall path-fn path))
+                     (prefix (file-name-as-directory (expand-file-name (funcall from-fn translation)))))
+                 (when (string-prefix-p prefix path)
+                   (replace-regexp-in-string (format "^%s" (regexp-quote prefix))
+                                             (file-name-as-directory
+                                              (expand-file-name (funcall to-fn translation)))
+                                             path))))))
+      (if return-all
+          (seq-filter #'identity (mapcar f cider-path-translations))
+        (seq-some f cider-path-translations)))))
+
+(defun cider--all-path-translations ()
+  "Returns `cider-path-translations' if non-empty, else seeks a present value."
+  (or cider-path-translations
+      ;; cider-path-translations often is defined as a directory-local variable,
+      ;; so after jumping to a .jar file, its value can be lost,
+      ;; so we have to figure out a possible translation:
+      (thread-last (buffer-list)
+                   (seq-map (lambda (buffer)
+                              (buffer-local-value 'cider-path-translations buffer)))
+                   (seq-filter #'identity)
+                   (seq-uniq)
+                   (apply #'append)
+                   (seq-uniq))))
 
 (defun cider--translate-path-from-nrepl (path)
   "Attempt to translate the nREPL PATH to a local path."
@@ -334,7 +352,12 @@ If no local or remote file exists, return nil."
           ((and tramp-path (file-exists-p tramp-path))
            tramp-path)
           ((and local-path (file-exists-p local-path))
-           local-path))))
+           local-path)
+          (t
+           (when-let* ((cider-path-translations (cider--all-path-translations)))
+             (thread-last (cider--translate-path local-path 'from-nrepl :return-all)
+                          (seq-filter #'file-exists-p)
+                          car))))))
 
 (declare-function archive-extract "arc-mode")
 (declare-function archive-zip-extract "arc-mode")
@@ -382,7 +405,18 @@ found."
             (t
              (with-current-buffer (generate-new-buffer
                                    (file-name-nondirectory entry))
-               (archive-zip-extract path entry)
+               ;; Use appropriate coding system for bytes read from unzip cmd to
+               ;; display Emacs native newlines regardless of whether the file
+               ;; uses unix LF or dos CRLF line endings.
+               ;; It's important to avoid spurious CR characters, which may
+               ;; appear as `^M', because they can confuse clojure-mode's symbol
+               ;; detection, e.g. `clojure-find-ns', and break `cider-find-var'.
+               ;; `clojure-find-ns' uses Emacs' (thing-at-point 'symbol) as
+               ;; part of identifying a file's namespace, and when a file
+               ;; isn't decoded properly, namespaces can be reported as
+               ;; `my.lib^M' which `cider-find-var' won't know what to do with.
+               (let ((coding-system-for-read 'prefer-utf-8))
+                 (archive-zip-extract path entry))
                (set-visited-file-name name)
                (setq-local default-directory (file-name-directory path))
                (setq-local buffer-read-only t)

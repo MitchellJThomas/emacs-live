@@ -1,11 +1,11 @@
 ;;; cider-macroexpansion.el --- Macro expansion support -*- lexical-binding: t -*-
 
 ;; Copyright © 2012-2013 Tim King, Phil Hagelberg, Bozhidar Batsov
-;; Copyright © 2013-2020 Bozhidar Batsov, Artur Malabarba and CIDER contributors
+;; Copyright © 2013-2023 Bozhidar Batsov, Artur Malabarba and CIDER contributors
 ;;
 ;; Author: Tim King <kingtim@gmail.com>
 ;;         Phil Hagelberg <technomancy@gmail.com>
-;;         Bozhidar Batsov <bozhidar@batsov.com>
+;;         Bozhidar Batsov <bozhidar@batsov.dev>
 ;;         Artur Malabarba <bruce.connor.am@gmail.com>
 ;;         Hugo Duncan <hugo@hugoduncan.org>
 ;;         Steve Purcell <steve@sanityinc.com>
@@ -33,7 +33,6 @@
 
 (require 'cider-mode)
 (require 'subr-x)
-(require 'cider-compat)
 
 (defconst cider-macroexpansion-buffer "*cider-macroexpansion*")
 
@@ -70,10 +69,10 @@ The default for DISPLAY-NAMESPACES is taken from
                   "ns" ,(cider-current-ns)
                   "display-namespaces" ,(or display-namespaces
                                             (symbol-name cider-macroexpansion-display-namespaces)))
-    (nconc (when cider-macroexpansion-print-metadata
-             '("print-meta" "true")))
-    (cider-nrepl-send-sync-request)
-    (nrepl-dict-get "expansion")))
+                (nconc (when cider-macroexpansion-print-metadata
+                         '("print-meta" "true")))
+                (cider-nrepl-send-sync-request)
+                (nrepl-dict-get "expansion")))
 
 (defun cider-macroexpand-undo (&optional arg)
   "Undo the last macroexpansion, using `undo-only'.
@@ -83,7 +82,7 @@ ARG is passed along to `undo-only'."
     (undo-only arg)))
 
 (defvar cider-last-macroexpand-expression nil
-  "Specify the last macroexpansion preformed.
+  "Specify the last macroexpansion performed.
 This variable specifies both what was expanded and the expander.")
 
 (defun cider-macroexpand-expr (expander expr)
@@ -143,7 +142,7 @@ If invoked with a PREFIX argument, use \\=`macroexpand\\=` instead of
     (erase-buffer)
     (insert (format "%s" expansion))
     (goto-char (point-max))
-    (cider--font-lock-ensure)))
+    (font-lock-ensure)))
 
 (defun cider-redraw-macroexpansion-buffer (expansion buffer start end)
   "Redraw the macroexpansion with new EXPANSION.
@@ -194,12 +193,8 @@ and point is placed after the expanded form."
     map))
 
 (define-minor-mode cider-macroexpansion-mode
-  "Minor mode for CIDER macroexpansion.
-
-\\{cider-macroexpansion-mode-map}"
-  nil
-  " Macroexpand"
-  cider-macroexpansion-mode-map)
+  "Minor mode for CIDER macroexpansion."
+  :lighter " Macroexpand")
 
 (provide 'cider-macroexpansion)
 

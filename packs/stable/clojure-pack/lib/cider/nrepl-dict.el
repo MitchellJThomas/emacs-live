@@ -1,11 +1,11 @@
 ;;; nrepl-dict.el --- Dictionary functions for Clojure nREPL -*- lexical-binding: t -*-
 
 ;; Copyright © 2012-2013 Tim King, Phil Hagelberg, Bozhidar Batsov
-;; Copyright © 2013-2020 Bozhidar Batsov, Artur Malabarba and CIDER contributors
+;; Copyright © 2013-2023 Bozhidar Batsov, Artur Malabarba and CIDER contributors
 ;;
 ;; Author: Tim King <kingtim@gmail.com>
 ;;         Phil Hagelberg <technomancy@gmail.com>
-;;         Bozhidar Batsov <bozhidar@batsov.com>
+;;         Bozhidar Batsov <bozhidar@batsov.dev>
 ;;         Artur Malabarba <bruce.connor.am@gmail.com>
 ;;         Hugo Duncan <hugo@hugoduncan.org>
 ;;         Steve Purcell <steve@sanityinc.com>
@@ -86,14 +86,14 @@ Return new dict.  Dict is modified by side effects."
   (if (nrepl-dict-p dict)
       (cl-loop for l on (cdr dict) by #'cddr
                collect (car l))
-    (error "Not an nREPL dict")))
+    (error "Not an nREPL dict object: %s" dict)))
 
 (defun nrepl-dict-vals (dict)
   "Return all the values in the nREPL DICT."
   (if (nrepl-dict-p dict)
       (cl-loop for l on (cdr dict) by #'cddr
                collect (cadr l))
-    (error "Not an nREPL dict")))
+    (error "Not an nREPL dict object: %s" dict)))
 
 (defun nrepl-dict-map (fn dict)
   "Map FN on nREPL DICT.
@@ -101,7 +101,7 @@ FN must accept two arguments key and value."
   (if (nrepl-dict-p dict)
       (cl-loop for l on (cdr dict) by #'cddr
                collect (funcall fn (car l) (cadr l)))
-    (error "Not an nREPL dict")))
+    (error "Not an nREPL dict object: %s" dict)))
 
 (defun nrepl-dict-merge (dict1 dict2)
   "Destructively merge DICT2 into DICT1.
@@ -124,9 +124,21 @@ any of the values is nil."
 (defun nrepl-dict-flat-map (function dict)
   "Map FUNCTION over DICT and flatten the result.
 FUNCTION follows the same restrictions as in `nrepl-dict-map', and it must
-also alway return a sequence (since the result will be flattened)."
+also always return a sequence (since the result will be flattened)."
   (when dict
     (apply #'append (nrepl-dict-map function dict))))
+
+(defun nrepl-dict-filter (function dict)
+  "For all key-values of DICT, return new dict where FUNCTION returns non-nil.
+
+FUNCTION should be a function taking two arguments, key and value."
+  (let ((new-map (nrepl-dict))
+        (keys (nrepl-dict-keys dict)))
+    (dolist (key keys)
+      (let ((val (nrepl-dict-get dict key)))
+        (when (funcall function key val)
+          (nrepl-dict-put new-map key val))))
+    new-map))
 
 
 ;;; More specific functions

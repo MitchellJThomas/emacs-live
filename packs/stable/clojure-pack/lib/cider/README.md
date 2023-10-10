@@ -4,9 +4,9 @@
 
 -----------
 [![License GPL 3][badge-license]](http://www.gnu.org/licenses/gpl-3.0.txt)
-[![MELPA](http://melpa.org/packages/cider-badge.svg)](http://melpa.org/#/cider)
-[![MELPA Stable](http://stable.melpa.org/packages/cider-badge.svg)](http://stable.melpa.org/#/cider)
 [![CircleCI](https://circleci.com/gh/clojure-emacs/cider.svg?style=svg)](https://circleci.com/gh/clojure-emacs/cider)
+[![Spell-check Status](https://github.com/clojure-emacs/cider/actions/workflows/spell_checking.yml/badge.svg)](https://github.com/clojure-emacs/cider/actions/workflows/spell_checking.yml)
+[![Discord](https://img.shields.io/badge/chat-on%20discord-7289da.svg?sanitize=true)](https://discord.com/invite/nFPpynQPME)
 [![Slack](https://img.shields.io/badge/chat-%23cider-green.svg?style=flat)](http://clojurians.net)
 
 CIDER is the **C**lojure(Script) **I**nteractive **D**evelopment **E**nvironment
@@ -28,7 +28,7 @@ tests and so on.
 [![Paypal](https://www.paypalobjects.com/en_US/i/btn/btn_donate_SM.gif)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=GRQKNBM6P8VRQ)
 
 Bozhidar (a.k.a. Bug, CIDER's primary author/maintainer) has spent countless hours working on
-CIDER and the [numerous the related projects](https://metaredux.com/posts/2018/11/09/ciders-orchard-the-heart.html). That's a lot of work and not all of it is fun!
+CIDER and the [numerous related projects](https://metaredux.com/posts/2018/11/09/ciders-orchard-the-heart.html). That's a lot of work and not all of it is fun!
 
 **Please consider [supporting financially CIDER's ongoing development](#funding).**
 
@@ -36,16 +36,20 @@ CIDER and the [numerous the related projects](https://metaredux.com/posts/2018/1
 
 The instructions that follow are meant to get you from zero to a running CIDER
 REPL in under 5 minutes.  See the
-[user manual](https://docs.cider.mx) for (way) more
+[online documentation](https://docs.cider.mx) for (way) more
 details.
 
 ### Installation
 
+[![MELPA](http://melpa.org/packages/cider-badge.svg)](http://melpa.org/#/cider)
+[![MELPA Stable](http://stable.melpa.org/packages/cider-badge.svg)](http://stable.melpa.org/#/cider)
+[![NonGNU ELPA](https://elpa.nongnu.org/nongnu/cider.svg)](https://elpa.nongnu.org/nongnu/cider.html)
+
 The recommended way to install CIDER is via `package.el` - the built-in package
 manager in Emacs.
 
-CIDER is available on the two major `package.el` community
-maintained repos -
+CIDER is available on all major `package.el` community
+maintained repos - [NonGNU ELPA](https://elpa.nongnu.org),
 [MELPA Stable](http://stable.melpa.org)
 and [MELPA](http://melpa.org).
 
@@ -102,6 +106,18 @@ available features is to go over the entire
 If you're into video lessons, you might also check out
 this [intro to CIDER demo](https://www.youtube.com/watch?v=aYA4AAjLfT0) as well.
 
+## Quick Reference Card
+
+You'll find all of CIDER's essential commands and their keybindings in its
+one-page printable [quick reference card](https://github.com/clojure-emacs/cider/blob/master/refcard/cider-refcard.pdf).
+
+New CIDER users might benefit from keeping a copy close to their keyboard.
+
+## Get Help
+
+Start with CIDER's [discussions board](https://github.com/clojure-emacs/cider/discussions). If it doesn't get the job done consider some of the other available
+[support channels](https://docs.cider.mx/cider/about/support.html).
+
 ## Changelog
 
 An extensive changelog is available [here](CHANGELOG.md).
@@ -133,21 +149,9 @@ core team members. Lovingly known as The Alumni:
 
 ## Release policy
 
-We’re following [SemVer](http://semver.org/) (as much as one can be
-following it when the major version is 0). At this point bumps of the
-minor (second) version number are considered major releases and always
-include new features or significant changes to existing features. API
-compatibility between major releases is not a (big) concern (although we try
-to break the API rarely and only for a good reason).
+We’re following [SemVer](http://semver.org/).
 
-The development cycle for the next major
-release starts immediately after the previous one has been
-shipped. Bugfix/point releases (if any) address only serious bugs and
-never contain new features.
-
-The versions of CIDER and `cider-nrepl` are always kept in sync. If you're
-tracking the `master` branch of CIDER, you should also be tracking the `master`
-branch of `cider-nrepl`.
+You can read more on the subject [here](https://docs.cider.mx/cider/about/release_policy.html).
 
 ## Logo
 
@@ -258,7 +262,7 @@ site. [[Become a sponsor](https://opencollective.com/cider#sponsor)]
 
 CIDER is distributed under the GNU General Public License, version 3.
 
-Copyright © 2012-2020 Bozhidar Batsov, Artur Malabarba, Tim King, Phil Hagelberg and
+Copyright © 2012-2023 Bozhidar Batsov, Artur Malabarba, Tim King, Phil Hagelberg and
 [contributors](https://github.com/clojure-emacs/cider/contributors).
 
 [badge-license]: https://img.shields.io/badge/license-GPL_3-green.svg

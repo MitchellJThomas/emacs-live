@@ -1,9 +1,9 @@
-;;; cider-client-tests.el
+;;; cider-client-tests.el  -*- lexical-binding: t; -*-
 
-;; Copyright © 2012-2020 Tim King, Bozhidar Batsov
+;; Copyright © 2012-2023 Tim King, Bozhidar Batsov
 
 ;; Author: Tim King <kingtim@gmail.com>
-;;         Bozhidar Batsov <bozhidar@batsov.com>
+;;         Bozhidar Batsov <bozhidar@batsov.dev>
 ;;         Artur Malabarba <bruce.connor.am@gmail.com>
 
 ;; This file is NOT part of GNU Emacs.
@@ -31,6 +31,9 @@
 (require 'buttercup)
 (require 'cider-client)
 (require 'cider-connection)
+(require 'cider-connection-test-utils "test/utils/cider-connection-test-utils")
+
+;; Please, for each `describe', ensure there's an `it' block, so that its execution is visible in CI.
 
 ;;; cider-client tests
 
@@ -106,7 +109,7 @@
 (describe "cider-nrepl-send-unhandled-request"
   (it "returns the id of the request sent to nREPL server and ignores the response"
     (spy-on 'process-send-string :and-return-value nil)
-    (with-repl-buffer "cider-nrepl-send-request" 'clj b
+    (with-repl-buffer "cider-nrepl-send-request" 'clj _b
       (setq-local nrepl-pending-requests (make-hash-table :test 'equal))
       (setq-local nrepl-completed-requests (make-hash-table :test 'equal))
       (let ((id (cider-nrepl-send-unhandled-request '("op" "t" "extra" "me"))))

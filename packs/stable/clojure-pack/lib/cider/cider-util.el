@@ -1,11 +1,11 @@
 ;; cider-util.el --- Common utility functions that don't belong anywhere else -*- lexical-binding: t -*-
 
 ;; Copyright © 2012-2013 Tim King, Phil Hagelberg, Bozhidar Batsov
-;; Copyright © 2013-2020 Bozhidar Batsov, Artur Malabarba and CIDER contributors
+;; Copyright © 2013-2023 Bozhidar Batsov, Artur Malabarba and CIDER contributors
 ;;
 ;; Author: Tim King <kingtim@gmail.com>
 ;;         Phil Hagelberg <technomancy@gmail.com>
-;;         Bozhidar Batsov <bozhidar@batsov.com>
+;;         Bozhidar Batsov <bozhidar@batsov.dev>
 ;;         Artur Malabarba <bruce.connor.am@gmail.com>
 ;;         Hugo Duncan <hugo@hugoduncan.org>
 ;;         Steve Purcell <steve@sanityinc.com>
@@ -39,12 +39,9 @@
 (require 'thingatpt)
 
 ;; clojure-mode and CIDER
-(require 'cider-compat)
 (require 'clojure-mode)
 
-(declare-function cider-sync-request:macroexpand "cider-macroexpansion")
-
-(defalias 'cider-pop-back 'pop-tag-mark)
+(defalias 'cider-pop-back #'pop-tag-mark)
 
 (defcustom cider-font-lock-max-length 10000
   "The max length of strings to fontify in `cider-font-lock-as'.
@@ -74,12 +71,12 @@ Setting this to nil removes the fontification restriction."
 
 (defun cider-in-string-p ()
   "Return non-nil if point is in a string."
-  (let ((beg (save-excursion (beginning-of-defun) (point))))
+  (let ((beg (save-excursion (beginning-of-defun-raw) (point))))
     (nth 3 (parse-partial-sexp beg (point)))))
 
 (defun cider-in-comment-p ()
   "Return non-nil if point is in a comment."
-  (let ((beg (save-excursion (beginning-of-defun) (point))))
+  (let ((beg (save-excursion (beginning-of-defun-raw) (point))))
     (nth 4 (parse-partial-sexp beg (point)))))
 
 (defun cider--tooling-file-p (file-name)
@@ -112,14 +109,22 @@ If BOUNDS is non-nil, return a list of its starting and ending position
 instead."
   (save-excursion
     (save-match-data
-      (end-of-defun)
+      (if (derived-mode-p 'cider-repl-mode)
+          (goto-char (point-max)) ;; in repls, end-of-defun won't work, so we perform the closest reasonable thing
+        (end-of-defun))
       (let ((end (point)))
         (clojure-backward-logical-sexp 1)
         (cider--text-or-limits bounds (point) end)))))
 
+(defun cider-get-ns-name ()
+  "Calls `clojure-find-ns', suppressing any errors.
+Therefore, possibly returns nil,
+so please handle that value from any callsites."
+  (clojure-find-ns :supress-errors))
+
 (defun cider-ns-form ()
   "Retrieve the ns form."
-  (when (clojure-find-ns)
+  (when (cider-get-ns-name)
     (save-excursion
       (goto-char (match-beginning 0))
       (cider-defun-at-point))))
@@ -127,18 +132,18 @@ instead."
 (defun cider-symbol-at-point (&optional look-back)
   "Return the name of the symbol at point, otherwise nil.
 Ignores the REPL prompt.  If LOOK-BACK is non-nil, move backwards trying to
-find a symbol if there isn't one at point."
+find a symbol if there isn't one at point.
+Does not strip the : from keywords, nor attempt to expand :: auto-resolved
+keywords."
   (or (when-let* ((str (thing-at-point 'symbol)))
-        ;; resolve ns-aliased keywords
-        (when (string-match-p "^::.+" str)
-          (setq str (or (ignore-errors (cider-sync-request:macroexpand "macroexpand-1" str)) "")))
         (unless (text-property-any 0 (length str) 'field 'cider-repl-prompt str)
           ;; remove font-locking
           (setq str (substring-no-properties str))
           (if (member str '("." ".."))
               str
             ;; Remove prefix quotes, and trailing . from constructors like Record.
-            (thread-last str
+            (thread-last
+              str
               ;; constructors (Foo.)
               (string-remove-suffix ".")
               ;; quoted symbols ('sym)
@@ -193,8 +198,6 @@ instead."
            (clojure-backward-logical-sexp 1)
            (list (point)
                  (progn (clojure-forward-logical-sexp 1)
-                        (skip-chars-forward "[:blank:]")
-                        (when (looking-at-p "\n") (forward-char 1))
                         (point))))))
 
 (defun cider-start-of-next-sexp (&optional skip)
@@ -280,22 +283,6 @@ return by the last called function."
 
 
 ;;; Font lock
-
-(defalias 'cider--font-lock-ensure
-  (if (fboundp 'font-lock-ensure)
-      #'font-lock-ensure
-    (with-no-warnings
-      (lambda (&optional _beg _end)
-        (when font-lock-mode
-          (font-lock-fontify-buffer))))))
-
-(defalias 'cider--font-lock-flush
-  (if (fboundp 'font-lock-flush)
-      #'font-lock-flush
-    (with-no-warnings
-      (lambda (&optional _beg _end)
-        (when font-lock-mode
-          (font-lock-fontify-buffer))))))
 
 (defvar cider--mode-buffers nil
   "A list of buffers for different major modes.")
@@ -393,20 +380,28 @@ propertized (defaults to current buffer)."
     (unless (equal "unspecified-bg" color)
       (color-lighten-name color (if darkp 5 -5)))))
 
-(autoload 'pkg-info-version-info "pkg-info.el")
-
 (defvar cider-version)
 (defvar cider-codename)
+
+(defun cider--pkg-version ()
+  "Extract CIDER's package version from its package metadata."
+  ;; Use `cond' below to avoid a compiler unused return value warning
+  ;; when `package-get-version' returns nil. See #3181.
+  ;; FIXME: Inline the logic from package-get-version and adapt it
+  (cond ((fboundp 'package-get-version)
+         (package-get-version))))
 
 (defun cider--version ()
   "Retrieve CIDER's version.
 A codename is added to stable versions."
-  (let ((version (condition-case nil
-                     (pkg-info-version-info 'cider)
-                   (error cider-version))))
-    (if (string-match-p "-snapshot" cider-version)
-        version
-      (format "%s (%s)" version cider-codename))))
+  (if (string-match-p "-snapshot" cider-version)
+      (let ((pkg-version (cider--pkg-version)))
+        (if pkg-version
+            ;; snapshot versions include the MELPA package version
+            (format "%s (package: %s)" cider-version pkg-version)
+          cider-version))
+    ;; stable versions include the codename of the release
+    (format "%s (%s)" cider-version cider-codename)))
 
 
 ;;; Strings
@@ -704,6 +699,7 @@ through a stack of help buffers.  Variables `help-back-label' and
     "One REPL to rule them all, One REPL to find them, One REPL to bring them all, and in parentheses bind them!"
     "A blank REPL promotes creativity."
     "A blank REPL is infinitely better than a blank cheque."
+    "May your functions be pure, your code concise and your programs a joy to behold!"
     ,(format "%s, I've a feeling we're not in Kansas anymore."
              (cider-user-first-name))
     ,(format "%s, this could be the start of a beautiful program."
@@ -712,8 +708,13 @@ through a stack of help buffers.  Variables `help-back-label' and
 
 (defun cider-random-words-of-inspiration ()
   "Select a random entry from `cider-words-of-inspiration'."
-  (eval (nth (random (length cider-words-of-inspiration))
-             cider-words-of-inspiration)))
+  (nth (random (length cider-words-of-inspiration))
+       cider-words-of-inspiration))
+
+(defun cider-inspire-me ()
+  "Display a random inspiration message."
+  (interactive)
+  (message (cider-random-words-of-inspiration)))
 
 (defvar cider-tips
   '("Press <\\[cider-connect]> to connect to a running nREPL server."
@@ -733,6 +734,7 @@ through a stack of help buffers.  Variables `help-back-label' and
     "Press <\\[cider-apropos]> to look for a symbol by some search string."
     "Press <\\[cider-apropos-documentation]> to look for a symbol that has some string in its docstring."
     "Press <\\[cider-eval-defun-at-point]> to eval the top-level form at point."
+    "Press <\\[cider-eval-dwim]> to eval to run cider-eval-region if a region is active, and cider-eval-defun-at-point otherwise."
     "Press <\\[cider-eval-defun-up-to-point]> to eval the top-level form up to the point."
     "Press <\\[cider-eval-sexp-up-to-point]> to eval the current form up to the point."
     "Press <\\[cider-eval-sexp-at-point]> to eval the current form around the point."
@@ -809,34 +811,6 @@ KIND can be the symbols `ns', `var', `emph', `fn', or a face name."
               (vconcat x `[:help ,(documentation (elt x 1))]))
              (t x)))
           menu-list))
-
-(defcustom cider-jdk-src-paths '("/usr/lib/jvm/openjdk-8/src.zip")
-  "Used by `cider-stacktrace-navigate'.
-Zip/jar files work, but it's better to extract them and put the directory
-paths here.  Clojure sources here:
-https://repo1.maven.org/maven2/org/clojure/clojure/1.8.0/."
-  :group 'cider
-  :package-version '(cider . "0.17.0")
-  :type '(list string))
-
-(defun cider-resolve-java-class (class)
-  "Return a path to a Java source file that corresponds to CLASS.
-
-This will be a zip/jar path for archived sources and a normal
-file path otherwise."
-  (when class
-    (let ((file-name (concat (replace-regexp-in-string "\\." "/" class) ".java")))
-      (cl-find-if
-       'file-exists-p
-       (mapcar
-        (lambda (d)
-          (cond ((file-directory-p d)
-                 (expand-file-name file-name d))
-                ((and (file-exists-p d)
-                      (member (file-name-extension d) '("jar" "zip")))
-                 (format "zip:file:%s!/%s" d file-name))
-                (t (error "Unexpected archive: %s" d))))
-        cider-jdk-src-paths)))))
 
 (provide 'cider-util)
 

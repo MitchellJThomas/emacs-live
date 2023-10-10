@@ -1,9 +1,9 @@
-;;; nrepl-bencode-tests.el
+;;; nrepl-bencode-tests.el  -*- lexical-binding: t; -*-
 
-;; Copyright © 2012-2020 Tim King, Bozhidar Batsov
+;; Copyright © 2012-2023 Tim King, Bozhidar Batsov
 
 ;; Author: Tim King <kingtim@gmail.com>
-;;         Bozhidar Batsov <bozhidar@batsov.com>
+;;         Bozhidar Batsov <bozhidar@batsov.dev>
 ;;         Artur Malabarba <bruce.connor.am@gmail.com>
 
 ;; This file is NOT part of GNU Emacs.
@@ -31,6 +31,17 @@
 (require 'cl-lib)
 (require 'nrepl-client)
 
+;; Please, for each `describe', ensure there's an `it' block, so that its execution is visible in CI.
+
+;; Workaround for silex/master-dev issue with buggy old snapshot.  To be removed
+;; once new snapshot image is build.
+(when (= emacs-major-version 29)
+  (cl-struct-define 'queue nil 'cl-structure-object 'record nil
+		    '((cl-tag-slot)
+		      (head)
+		      (tail))
+		    'cl-struct-queue-tags 'queue 't))
+
 (defun nrepl-bdecode-string (string)
   "Return first complete object in STRING.
 If object is incomplete, return a decoded path."
@@ -43,7 +54,7 @@ If object is incomplete, return a decoded path."
   "Decode messages which were split across STRINGS."
   (let* ((sq (make-queue))
          (rq (nrepl-response-queue))
-         ipath)
+         ) ;; ipath
     (dolist (s strings)
       (queue-enqueue sq s)
       (nrepl-bdecode sq rq))
@@ -274,7 +285,7 @@ If object is incomplete, return a decoded path."
                            "session" "6fc999d0-3795-4d51-85fc-ccca7537ee57"
                            "status" ("done"))))))
 
-  (describe "when bencode strings have deeply nested struture"
+  (describe "when bencode strings have deeply nested structure"
     :var (nrepl--toString-dicts nrepl--toString-strings)
 
     (it "decodes the structures"
@@ -306,7 +317,7 @@ If object is incomplete, return a decoded path."
 
       (let ((max-lisp-eval-depth 100)
             (max-specpdl-size 100))
-        (expect (apply 'nrepl-bdecode-strings nrepl--toString-strings)
+        (expect (apply #'nrepl-bdecode-strings nrepl--toString-strings)
                 :to-equal nrepl--toString-dicts))))
 
   (describe "bencoding is idempotent"

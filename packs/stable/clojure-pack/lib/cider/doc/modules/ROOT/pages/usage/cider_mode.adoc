@@ -86,6 +86,11 @@ kbd:[C-c C-e]
 kbd:[C-c C-c]
 | Evaluate the top level form under point and display the result in the echo area.
 
+| `cider-eval-dwim`
+| kbd:[C-c C-v s] +
+kbd:[C-c C-v C-s]
+| If no region is active, eval the toplevel form with cider-eval-defun-at-point. If a region is active, run cider-eval-region
+
 | `cider-eval-list-at-point`
 | kbd:[C-c C-v l] +
 kbd:[C-c C-v C-l]
@@ -123,7 +128,7 @@ kbd:[C-u C-c C-c]
 
 | `cider-eval-ns-form`
 | kbd:[C-c C-v n]
-| Eval the ns form.
+| Eval the ns form. If invoked with a prefix argument, undefine all vars and aliases in the ns first.
 
 | `cider-repl-set-ns`
 | kbd:[C-c M-n (M-)n]
@@ -151,15 +156,15 @@ kbd:[C-u C-c C-c]
 
 | `cider-load-buffer`
 | kbd:[C-c C-k]
-| Load (eval) the current buffer.
+| Load (eval) the current buffer. If invoked with a prefix argument, undefine all vars and aliases in the ns before loading.
 
 | `cider-load-file`
 | kbd:[C-c C-l]
-| Load (eval) a Clojure file.
+| Load (eval) a Clojure file. If invoked with a prefix argument, undefine all vars and aliases in the ns before loading.
 
 | `cider-load-all-files`
 | kbd:[C-c C-M-l]
-| Load (eval) all Clojure files below a directory.
+| Load (eval) all Clojure files below a directory. If invoked with a prefix argument, undefine all vars and aliases in each file before loading.
 
 | `cider-ns-refresh`
 | kbd:[C-c M-n (M-)r]
@@ -216,10 +221,14 @@ kbd:[C-c C-d C-e]
 | kbd:[C-c C-u]
 | Undefine a symbol. If invoked with a prefix argument it inverts the value of `cider-prompt-for-symbol`.
 
+| `cider-undef-all`
+| kbd:[C-c C-M-u]
+| Undefine all symbols and aliases in the namespace.
+
 | `cider-test-run-test`
 | kbd:[C-c C-t t] +
 kbd:[C-c C-t C-t]
-| Run test at point.
+| Run test at point. If the form under the point is a function, try to search and run a corresponding test.
 
 | `cider-test-rerun-test`
 | kbd:[C-c C-t a] +

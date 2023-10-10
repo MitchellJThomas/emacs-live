@@ -1,6 +1,6 @@
 ;;; cider-stacktrace.el --- Stacktrace navigator -*- lexical-binding: t -*-
 
-;; Copyright © 2014-2020 Jeff Valk, Bozhidar Batsov and CIDER contributors
+;; Copyright © 2014-2023 Jeff Valk, Bozhidar Batsov and CIDER contributors
 
 ;; Author: Jeff Valk <jv@jeffvalk.com>
 
@@ -33,7 +33,6 @@
 (require 'subr-x)
 
 (require 'cider-common)
-(require 'cider-compat)
 (require 'cider-client)
 (require 'cider-popup)
 (require 'cider-util)
@@ -50,14 +49,18 @@
 If nil, messages will not be wrapped.  If truthy but non-numeric,
 `fill-column' will be used."
   :type 'list
-  :group 'cider-stacktrace
   :package-version '(cider . "0.7.0"))
 
 (defcustom cider-stacktrace-default-filters '(tooling dup)
   "Frame types to omit from initial stacktrace display."
   :type 'list
-  :group 'cider-stacktrace
   :package-version '(cider . "0.6.0"))
+
+(defcustom cider-stacktrace-navigate-to-other-window t
+  "If truthy, navigating from a stack frame will use other window.
+Pick nil if you prefer the same window as *cider-error*."
+  :type 'boolean
+  :package-version '(cider . "1.8.0"))
 
 (make-obsolete 'cider-stacktrace-print-length 'cider-stacktrace-print-options "0.20")
 (make-obsolete 'cider-stacktrace-print-level 'cider-stacktrace-print-options "0.20")
@@ -79,51 +82,43 @@ If nil, messages will not be wrapped.  If truthy but non-numeric,
   "Errors that won't make the stacktrace buffer 'pop-over' your active window.
 The error types are represented as strings."
   :type 'list
-  :group 'cider-stacktrace
   :package-version '(cider . "0.12.0"))
 
 ;; Faces
 
 (defface cider-stacktrace-error-class-face
   '((t (:inherit font-lock-warning-face)))
-  "Face for exception class names"
-  :group 'cider-stacktrace
+  "Face for exception class names."
   :package-version '(cider . "0.6.0"))
 
 (defface cider-stacktrace-error-message-face
   '((t (:inherit font-lock-doc-face)))
-  "Face for exception messages"
-  :group 'cider-stacktrace
+  "Face for exception messages."
   :package-version '(cider . "0.7.0"))
 
 (defface cider-stacktrace-filter-active-face
   '((t (:inherit button :underline t :weight normal)))
-  "Face for filter buttons representing frames currently visible"
-  :group 'cider-stacktrace
+  "Face for filter buttons representing frames currently visible."
   :package-version '(cider . "0.6.0"))
 
 (defface cider-stacktrace-filter-inactive-face
   '((t (:inherit button :underline nil :weight normal)))
-  "Face for filter buttons representing frames currently filtered out"
-  :group 'cider-stacktrace
+  "Face for filter buttons representing frames currently filtered out."
   :package-version '(cider . "0.6.0"))
 
 (defface cider-stacktrace-face
   '((t (:inherit default)))
-  "Face for stack frame text"
-  :group 'cider-stacktrace
+  "Face for stack frame text."
   :package-version '(cider . "0.6.0"))
 
 (defface cider-stacktrace-ns-face
   '((t (:inherit font-lock-comment-face)))
-  "Face for stack frame namespace name"
-  :group 'cider-stacktrace
+  "Face for stack frame namespace name."
   :package-version '(cider . "0.6.0"))
 
 (defface cider-stacktrace-fn-face
   '((t (:inherit default :weight bold)))
-  "Face for stack frame function name"
-  :group 'cider-stacktrace
+  "Face for stack frame function name."
   :package-version '(cider . "0.6.0"))
 
 (defface cider-stacktrace-promoted-button-face
@@ -132,7 +127,6 @@ The error types are represented as strings."
      :inherit error)
     (t :inverse-video t))
   "A button with this face represents a promoted (non-suppressed) error type."
-  :group 'cider-stacktrace
   :package-version '(cider . "0.12.0"))
 
 (defface cider-stacktrace-suppressed-button-face
@@ -141,7 +135,6 @@ The error types are represented as strings."
      :inherit widget-inactive)
     (t :inverse-video t))
   "A button with this face represents a suppressed error type."
-  :group 'cider-stacktrace
   :package-version '(cider . "0.12.0"))
 
 ;; Colors & Theme Support
@@ -150,14 +143,12 @@ The error types are represented as strings."
   (cider-scale-background-color)
   "Background color for stacktrace frames.")
 
-(defadvice enable-theme (after cider-stacktrace-adapt-to-theme activate)
+(advice-add 'enable-theme  :after #'cider--stacktrace-adapt-to-theme)
+(advice-add 'disable-theme :after #'cider--stacktrace-adapt-to-theme)
+(defun cider--stacktrace-adapt-to-theme (&rest _)
   "When theme is changed, update `cider-stacktrace-frames-background-color'."
-  (setq cider-stacktrace-frames-background-color (cider-scale-background-color)))
-
-
-(defadvice disable-theme (after cider-stacktrace-adapt-to-theme activate)
-  "When theme is disabled, update `cider-stacktrace-frames-background-color'."
-  (setq cider-stacktrace-frames-background-color (cider-scale-background-color)))
+  (setq cider-stacktrace-frames-background-color
+        (cider-scale-background-color)))
 
 
 ;; Mode & key bindings
@@ -218,7 +209,8 @@ The error types are represented as strings."
   (setq-local electric-indent-chars nil)
   (setq-local cider-stacktrace-hidden-frame-count 0)
   (setq-local cider-stacktrace-filters cider-stacktrace-default-filters)
-  (setq-local cider-stacktrace-cause-visibility (make-vector 10 0)))
+  (setq-local cider-stacktrace-cause-visibility (make-vector 10 0))
+  (buffer-disable-undo))
 
 
 ;; Stacktrace filtering
@@ -384,17 +376,17 @@ grouped with a suppressed error type."
   (seq-intersection error-types cider-stacktrace-suppressed-errors))
 
 (defun cider-stacktrace-suppress-error (error-type)
-  "Destructively add element ERROR-TYPE to the `cider-stacktrace-suppressed-errors' set."
+  "Destructively add ERROR-TYPE to the `cider-stacktrace-suppressed-errors' set."
   (setq cider-stacktrace-suppressed-errors
         (cl-adjoin error-type cider-stacktrace-suppressed-errors :test 'equal)))
 
 (defun cider-stacktrace-promote-error (error-type)
-  "Destructively remove element ERROR-TYPE from the `cider-stacktrace-suppressed-errors' set."
+  "Destructively remove ERROR-TYPE from `cider-stacktrace-suppressed-errors'."
   (setq cider-stacktrace-suppressed-errors
         (remove error-type cider-stacktrace-suppressed-errors)))
 
 (defun cider-stacktrace-suppressed-error-p (error-type)
-  "Return non-nil if element ERROR-TYPE is a member of the `cider-stacktrace-suppressed-errors' set."
+  "Return non-nil if ERROR-TYPE is in `cider-stacktrace-suppressed-errors'."
   (member error-type cider-stacktrace-suppressed-errors))
 
 ;; Interactive functions
@@ -415,7 +407,7 @@ grouped with a suppressed error type."
 
 (defun cider-stacktrace-cycle-cause (num &optional level)
   "Update element NUM of `cider-stacktrace-cause-visibility'.
-If LEVEL is specified, it is useed, otherwise its current value is incremented.
+If LEVEL is specified, it is used, otherwise its current value is incremented.
 When it reaches 3, it wraps to 0."
   (let ((level (or level (1+ (elt cider-stacktrace-cause-visibility num)))))
     (aset cider-stacktrace-cause-visibility num (mod level 3))
@@ -504,7 +496,14 @@ When it reaches 3, it wraps to 0."
   (cider-stacktrace-toggle 'repl))
 
 (defun cider-stacktrace-toggle-tooling ()
-  "Toggle display of Tooling stack frames (compiler, nREPL middleware, etc)."
+  "Toggle display of tooling stack frames.
+
+These include:
+
+  * Clojure compiler and runtime internals
+     * may be `.clj' or `.java' files.
+  * nREPL internals
+  * CIDER internals."
   (interactive)
   (cider-stacktrace-toggle 'tooling))
 
@@ -528,7 +527,7 @@ When it reaches 3, it wraps to 0."
 
 (defun cider-stacktrace-toggle-suppression (button)
   "Toggle stacktrace pop-over/pop-under behavior for the `error-type' in BUTTON.
-Achieved by destructively manipulating the `cider-stacktrace-suppressed-errors' set."
+Achieved by destructively manipulating `cider-stacktrace-suppressed-errors'."
   (with-current-buffer cider-error-buffer
     (let ((inhibit-read-only t)
           (suppressed (button-get button 'suppressed))
@@ -557,12 +556,11 @@ Achieved by destructively manipulating the `cider-stacktrace-suppressed-errors' 
          (line-shift (- (or (button-get button 'line) 0)
                         (or (nrepl-dict-get info "line") 1)))
          (file (or
-                (and (null var) (cider-resolve-java-class class))
                 (nrepl-dict-get info "file")
                 (button-get button 'file)))
          ;; give priority to `info` files as `info` returns full paths.
          (info (nrepl-dict-put info "file" file)))
-    (cider--jump-to-loc-from-info info t)
+    (cider--jump-to-loc-from-info info cider-stacktrace-navigate-to-other-window)
     (forward-line line-shift)
     (back-to-indentation)))
 
@@ -620,7 +618,7 @@ others."
       (insert-text-button (car filter)
                           'filter (cadr filter)
                           'follow-link t
-                          'action 'cider-stacktrace-filter
+                          'action #'cider-stacktrace-filter
                           'help-echo (cider-stacktrace-tooltip
                                       (format "Toggle %s stack frames"
                                               (car filter))))
@@ -631,7 +629,7 @@ others."
       (insert-text-button (car filter)
                           'filter (cadr filter)
                           'follow-link t
-                          'action 'cider-stacktrace-filter
+                          'action #'cider-stacktrace-filter
                           'help-echo (cider-stacktrace-tooltip
                                       (format "Toggle %s stack frames"
                                               (car filter))))
@@ -642,7 +640,7 @@ others."
       (insert " " hidden "\n"))))
 
 (defun cider-stacktrace-render-suppression-toggle (buffer error-types)
-  "Emit into BUFFER toggle buttons for each of the ERROR-TYPES leading this stacktrace buffer."
+  "Emit toggle buttons for each of the ERROR-TYPES leading this stacktrace BUFFER."
   (with-current-buffer buffer
     (when error-types
       (insert "  This is an unexpected CIDER middleware error.\n  Please submit a bug report via `")
@@ -663,7 +661,7 @@ others."
           (insert-text-button (format "%s %s" (if suppressed "Promote" "Suppress") error-type)
                               'follow-link t
                               'error-type error-type
-                              'action 'cider-stacktrace-toggle-suppression
+                              'action #'cider-stacktrace-toggle-suppression
                               'suppressed suppressed
                               'face (if suppressed
                                         'cider-stacktrace-suppressed-button-face
@@ -677,30 +675,38 @@ others."
   "Emit into BUFFER function call site info for the stack FRAME.
 This associates text properties to enable filtering and source navigation."
   (with-current-buffer buffer
-    (nrepl-dbind-response frame (file line flags class method name var ns fn)
-      (let ((flags (mapcar 'intern flags))) ; strings -> symbols
-        (insert-text-button (format "%26s:%5d  %s/%s"
-                                    (if (member 'repl flags) "REPL" file) line
-                                    (if (member 'clj flags) ns class)
-                                    (if (member 'clj flags) fn method))
-                            'var var 'class class 'method method
-                            'name name 'file file 'line line
-                            'flags flags 'follow-link t
-                            'action 'cider-stacktrace-navigate
-                            'help-echo (cider-stacktrace-tooltip
-                                        "View source at this location")
-                            'font-lock-face 'cider-stacktrace-face
-                            'type 'cider-plain-button)
-        (save-excursion
-          (let ((p4 (point))
-                (p1 (search-backward " "))
-                (p2 (search-forward "/"))
-                (p3 (search-forward-regexp "[^/$]+")))
-            (put-text-property p1 p4 'font-lock-face 'cider-stacktrace-ns-face)
-            (put-text-property p2 p3 'font-lock-face 'cider-stacktrace-fn-face)
-            (put-text-property (line-beginning-position) (line-end-position)
-                               'cider-stacktrace-frame t)))
-        (insert "\n")))))
+    (if (null frame) ;; Probably caused by OmitStackTraceInFastThrow
+        (let ((url "https://docs.cider.mx/cider/troubleshooting.html#empty-java-stacktraces"))
+          (insert "  No stacktrace available!\n  Please see ")
+          (insert-text-button url
+                              'url url
+                              'follow-link t
+                              'action (lambda (x) (browse-url (button-get x 'url)))))
+      (nrepl-dbind-response frame (file line flags class method name var ns fn)
+        (when (or class file fn method ns name)
+          (let ((flags (mapcar #'intern flags))) ; strings -> symbols
+            (insert-text-button (format "%26s:%5d  %s/%s"
+                                        (if (member 'repl flags) "REPL" file) (or line -1)
+                                        (if (member 'clj flags) ns class)
+                                        (if (member 'clj flags) fn method))
+                                'var var 'class class 'method method
+                                'name name 'file file 'line line
+                                'flags flags 'follow-link t
+                                'action #'cider-stacktrace-navigate
+                                'help-echo (cider-stacktrace-tooltip
+                                            "View source at this location")
+                                'font-lock-face 'cider-stacktrace-face
+                                'type 'cider-plain-button)
+            (save-excursion
+              (let ((p4 (point))
+                    (p1 (search-backward " "))
+                    (p2 (search-forward "/"))
+                    (p3 (search-forward-regexp "[^/$]+")))
+                (put-text-property p1 p4 'font-lock-face 'cider-stacktrace-ns-face)
+                (put-text-property p2 p3 'font-lock-face 'cider-stacktrace-fn-face)
+                (put-text-property (line-beginning-position) (line-end-position)
+                                   'cider-stacktrace-frame t)))
+            (insert "\n")))))))
 
 (defun cider-stacktrace-render-compile-error (buffer cause)
   "Emit into BUFFER the compile error CAUSE, and enable jumping to it."
@@ -852,7 +858,8 @@ the NAME.  The whole group is prefixed by string INDENT."
               (goto-char (next-single-property-change (point) 'compile-error))
             (progn
               (while (cider-stacktrace-next-cause))
-              (goto-char (next-single-property-change (point) 'flags)))))))))
+              (when-let (position (next-single-property-change (point) 'flags))
+                (goto-char position)))))))))
 
 (defun cider-stacktrace-render (buffer causes &optional error-types)
   "Emit into BUFFER useful stacktrace information for the CAUSES.
@@ -883,6 +890,54 @@ through the `cider-stacktrace-suppressed-errors' variable."
             (setq num (1- num))))))
     (cider-stacktrace-initialize causes)
     (font-lock-refresh-defaults)))
+
+(defun cider-stacktrace--analyze-stacktrace-op (stacktrace)
+  "Return the Cider NREPL op to analyze STACKTRACE."
+  (list "op" "analyze-stacktrace" "stacktrace" stacktrace))
+
+(defun cider-stacktrace--stacktrace-request (stacktrace)
+  "Return the Cider NREPL request to analyze STACKTRACE."
+  (thread-last
+    (map-merge 'list
+               (list (cider-stacktrace--analyze-stacktrace-op stacktrace))
+               (cider--nrepl-print-request-map fill-column))
+    (seq-mapcat #'identity)))
+
+(defun cider-stacktrace--analyze-render (causes)
+  "Render the CAUSES of the stacktrace analysis result."
+  (let ((buffer (get-buffer-create cider-error-buffer)))
+    (with-current-buffer buffer
+      (cider-stacktrace-mode)
+      (cider-stacktrace-render buffer (reverse causes))
+      (display-buffer buffer cider-jump-to-pop-to-buffer-actions))))
+
+(defun cider-stacktrace-analyze-string (stacktrace)
+  "Analyze the STACKTRACE string and show the result."
+  (when (stringp stacktrace)
+    (set-text-properties 0 (length stacktrace) nil stacktrace))
+  (let (causes)
+    (cider-nrepl-send-request
+     (cider-stacktrace--stacktrace-request stacktrace)
+     (lambda (response)
+       (setq causes (nrepl-dbind-response response (class status)
+                      (cond (class (cons response causes))
+                            ((and (member "done" status) causes)
+                             (cider-stacktrace--analyze-render causes)))))))))
+
+(defun cider-stacktrace-analyze-at-point ()
+  "Analyze the stacktrace at point."
+  (interactive)
+  (cond ((thing-at-point 'sentence)
+         (cider-stacktrace-analyze-string (thing-at-point 'sentence)))
+        ((thing-at-point 'paragraph)
+         (cider-stacktrace-analyze-string (thing-at-point 'paragraph)))
+        (t (cider-stacktrace-analyze-in-region (region-beginning) (region-end)))))
+
+(defun cider-stacktrace-analyze-in-region (beg end)
+  "Analyze the stacktrace in the region between BEG and END."
+  (interactive (list (region-beginning) (region-end)))
+  (let ((stacktrace (buffer-substring beg end)))
+    (cider-stacktrace-analyze-string stacktrace)))
 
 (provide 'cider-stacktrace)
 

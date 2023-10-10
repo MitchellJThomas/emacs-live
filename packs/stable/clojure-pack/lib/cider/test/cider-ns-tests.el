@@ -1,8 +1,8 @@
-;;; cider-ns-tests.el
+;;; cider-ns-tests.el  -*- lexical-binding: t; -*-
 
-;; Copyright © 2019-2020 Bozhidar Batsov
+;; Copyright © 2019-2023 Bozhidar Batsov
 
-;; Author: Bozhidar Batsov <bozhidar@batsov.com>
+;; Author: Bozhidar Batsov <bozhidar@batsov.dev>
 
 ;; This file is NOT part of GNU Emacs.
 
@@ -27,6 +27,8 @@
 
 (require 'buttercup)
 (require 'cider-ns)
+
+;; Please, for each `describe', ensure there's an `it' block, so that its execution is visible in CI.
 
 (describe "cider-ns-refresh"
   (it "raises a user error if cider is not connected"

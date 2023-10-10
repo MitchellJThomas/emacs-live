@@ -1,8 +1,8 @@
 ;;; cider-ns.el --- Namespace manipulation functionality -*- lexical-binding: t -*-
 
-;; Copyright © 2013-2020 Bozhidar Batsov, Artur Malabarba and CIDER contributors
+;; Copyright © 2013-2023 Bozhidar Batsov, Artur Malabarba and CIDER contributors
 ;;
-;; Author: Bozhidar Batsov <bozhidar@batsov.com>
+;; Author: Bozhidar Batsov <bozhidar@batsov.dev>
 ;;         Artur Malabarba <bruce.connor.am@gmail.com>
 
 ;; This program is free software: you can redistribute it and/or modify
@@ -65,8 +65,8 @@
 (require 'cider-eval)
 (require 'cider-popup)
 (require 'cider-stacktrace)
+(require 'cider-util)
 
-(define-obsolete-variable-alias 'cider-save-files-on-cider-ns-refresh 'cider-ns-save-files-on-refresh "0.18")
 (defcustom cider-ns-save-files-on-refresh 'prompt
   "Controls whether to prompt to save files before refreshing.
 If nil, files are not saved.
@@ -90,7 +90,6 @@ If t, all buffers visiting files on the classpath might be saved."
 
 (defconst cider-ns-refresh-log-buffer "*cider-ns-refresh-log*")
 
-(define-obsolete-variable-alias 'cider-refresh-show-log-buffer 'cider-ns-refresh-show-log-buffer "0.18")
 (defcustom cider-ns-refresh-show-log-buffer nil
   "Controls when to display the refresh log buffer.
 If non-nil, the log buffer will be displayed every time `cider-ns-refresh' is
@@ -102,7 +101,6 @@ displayed in the echo area."
   :group 'cider
   :package-version '(cider . "0.10.0"))
 
-(define-obsolete-variable-alias 'cider-refresh-before-fn 'cider-ns-refresh-before-fn "0.18")
 (defcustom cider-ns-refresh-before-fn nil
   "Clojure function for `cider-ns-refresh' to call before reloading.
 If nil, nothing will be invoked before reloading.  Must be a
@@ -112,7 +110,6 @@ prevent reloading from occurring."
   :group 'cider
   :package-version '(cider . "0.10.0"))
 
-(define-obsolete-variable-alias 'cider-refresh-after-fn 'cider-ns-refresh-after-fn "0.18")
 (defcustom cider-ns-refresh-after-fn nil
   "Clojure function for `cider-ns-refresh' to call after reloading.
 If nil, nothing will be invoked after reloading.  Must be a
@@ -199,9 +196,9 @@ org.clojure/tools.namespace.  See Commentary of this file for a longer list
 of differences.  From the Clojure doc: \":reload forces loading of all the
 identified libs even if they are already loaded\"."
   (interactive "P")
-  (let ((ns (if prompt
-                (string-remove-prefix "'" (read-from-minibuffer "Namespace: " (clojure-find-ns)))
-              (clojure-find-ns))))
+  (when-let ((ns (if prompt
+                     (string-remove-prefix "'" (read-from-minibuffer "Namespace: " (cider-get-ns-name)))
+                   (cider-get-ns-name))))
     (cider-interactive-eval (format "(require '%s :reload)" ns))))
 
 ;;;###autoload
@@ -215,9 +212,9 @@ of differences.  From the Clojure doc: \":reload-all implies :reload and
 also forces loading of all libs that the identified libs directly or
 indirectly load via require\"."
   (interactive "P")
-  (let ((ns (if prompt
-                (string-remove-prefix "'" (read-from-minibuffer "Namespace: " (clojure-find-ns)))
-              (clojure-find-ns))))
+  (when-let ((ns (if prompt
+                     (string-remove-prefix "'" (read-from-minibuffer "Namespace: " (cider-get-ns-name)))
+                   (cider-get-ns-name))))
     (cider-interactive-eval (format "(require '%s :reload-all)" ns))))
 
 ;;;###autoload
@@ -260,20 +257,17 @@ refresh functions (defined in `cider-ns-refresh-before-fn' and
             (cider-nrepl-send-sync-request '("op" "refresh-clear") conn))
           (cider-nrepl-send-request
            (thread-last
-               (map-merge 'list
-                          `(("op" ,(if refresh-all? "refresh-all" "refresh")))
-                          (cider--nrepl-print-request-map fill-column)
-                          (when (and (not inhibit-refresh-fns) cider-ns-refresh-before-fn)
-                            `(("before" ,cider-ns-refresh-before-fn)))
-                          (when (and (not inhibit-refresh-fns) cider-ns-refresh-after-fn)
-                            `(("after" ,cider-ns-refresh-after-fn))))
+             (map-merge 'list
+                        `(("op" ,(if refresh-all? "refresh-all" "refresh")))
+                        (cider--nrepl-print-request-map fill-column)
+                        (when (and (not inhibit-refresh-fns) cider-ns-refresh-before-fn)
+                          `(("before" ,cider-ns-refresh-before-fn)))
+                        (when (and (not inhibit-refresh-fns) cider-ns-refresh-after-fn)
+                          `(("after" ,cider-ns-refresh-after-fn))))
              (seq-mapcat #'identity))
            (lambda (response)
              (cider-ns-refresh--handle-response response log-buffer))
            conn))))))
-
-;;;###autoload
-(define-obsolete-function-alias 'cider-refresh 'cider-ns-refresh "0.18")
 
 (provide 'cider-ns)
 ;;; cider-ns.el ends here

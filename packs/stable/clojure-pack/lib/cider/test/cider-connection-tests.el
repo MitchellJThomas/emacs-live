@@ -1,9 +1,10 @@
+;; -*- lexical-binding: t; -*-
  ;;; cider-connection-tests.el
 
-;; Copyright © 2012-2020 Tim King, Bozhidar Batsov, Vitalie Spinu
+;; Copyright © 2012-2023 Tim King, Bozhidar Batsov, Vitalie Spinu
 
 ;; Author: Tim King <kingtim@gmail.com>
-;;         Bozhidar Batsov <bozhidar@batsov.com>
+;;         Bozhidar Batsov <bozhidar@batsov.dev>
 ;;         Vitalie Spinu <spinuvit@gmail.com>
 
 ;; This file is NOT part of GNU Emacs.
@@ -30,7 +31,9 @@
 (require 'buttercup)
 (require 'sesman)
 (require 'cider-connection)
-(require 'cider-connection-test-utils)
+(require 'cider-connection-test-utils "test/utils/cider-connection-test-utils")
+
+;; Please, for each `describe', ensure there's an `it' block, so that its execution is visible in CI.
 
 (describe "cider-ensure-connected"
   :var (sesman-sessions-hashmap sesman-links-alist ses-name ses-name2)
@@ -42,7 +45,7 @@
           ses-name2 "b-session"))
 
   (it "returns nil when a cider connection is available"
-    (let ((default-directory "/tmp/a-dir"))
+    (let ((default-directory (expand-file-name "/tmp/a-dir")))
       (with-repl-buffer "cider-ensure-session" 'clj b
         (expect (cider-ensure-connected) :to-equal
                 (list "cider-ensure-session" b)))))
@@ -57,6 +60,12 @@
   (before-each
     (setq sesman-sessions-hashmap (make-hash-table :test #'equal)
           sesman-links-alist nil
+          cider-ancillary-buffers (seq-filter (lambda (s)
+                                                ;; sometimes "*temp*" buffers can sneak into cider-ancillary-buffers.
+                                                ;; Those are the artifact of some other test, and can break these tests
+                                                ;; by affecting the logic in cider--sesman-friendly-session-p.
+                                                (string-prefix-p "*cider" s))
+                                              cider-ancillary-buffers)
           ses-name "a-session"
           ses-name2 "b-session"))
 
@@ -69,7 +78,7 @@
   (describe "when active connections are available"
 
     (it "always returns the latest connection"
-      (let ((default-directory "/tmp/a-dir"))
+      (let ((default-directory (expand-file-name "/tmp/a-dir")))
         (with-repl-buffer ses-name 'clj bb1
           (with-repl-buffer ses-name 'cljs bb2
             (with-repl-buffer ses-name 'clj b1
@@ -90,11 +99,11 @@
                   (expect (cider-current-repl) :to-equal b2))))))))
 
     (it "always returns the most recently used connection"
-      (let ((default-directory "/tmp/a-dir"))
+      (let ((default-directory (expand-file-name "/tmp/a-dir")))
         (with-repl-buffer ses-name 'clj bb1
           (with-repl-buffer ses-name 'cljs bb2
-            (with-repl-buffer ses-name 'clj b1
-              (with-repl-buffer ses-name 'cljs b2
+            (with-repl-buffer ses-name 'clj _b1
+              (with-repl-buffer ses-name 'cljs _b2
 
                 (switch-to-buffer bb2)
                 (switch-to-buffer bb1)
@@ -117,7 +126,7 @@
     (describe "when current buffer is a 'multi' buffer"
       (describe "when there is only one connection available"
         (it "returns the only connection"
-          (let ((default-directory "/tmp/a-dir"))
+          (let ((default-directory (expand-file-name "/tmp/a-dir")))
             (with-repl-buffer ses-name 'clj b
               (with-temp-buffer
                 (clojure-mode)
@@ -130,31 +139,31 @@
 
       (describe "when connection of that type exists"
         (it "returns that connection buffer"
-          (let ((default-directory "/tmp/a-dir"))
+          (let ((default-directory (expand-file-name "/tmp/a-dir")))
             ;; for clj
             (with-repl-buffer ses-name 'clj b1
-              (with-repl-buffer ses-name 'cljs b2
+              (with-repl-buffer ses-name 'cljs _b2
                 (expect (cider-current-repl 'clj) :to-equal b1)))
             ;; for cljs
             (with-repl-buffer ses-name 'cljs b1
-              (with-repl-buffer ses-name 'clj b2
+              (with-repl-buffer ses-name 'clj _b2
                 (expect (cider-current-repl 'cljs) :to-equal b1))))))
 
       (describe "when connection of that type doesn't exists"
         (it "returns nil"
           ;; for clj
-          (with-repl-buffer ses-name 'cljs b1
+          (with-repl-buffer ses-name 'cljs _b1
             (expect (cider-current-repl 'clj) :to-equal nil))
 
           ;; for cljs
-          (with-repl-buffer ses-name 'clj b2
+          (with-repl-buffer ses-name 'clj _b2
             (expect (cider-current-repl 'cljs) :to-equal nil))))
 
       (describe "when type argument is not given"
 
         (describe "when a connection matching current file extension exists"
           (it "returns that connection buffer"
-            (let ((default-directory "/tmp/a-dir"))
+            (let ((default-directory (expand-file-name "/tmp/a-dir")))
               ;; for clj
               (with-repl-buffer ses-name 'clj b1
                 (with-repl-buffer ses-name 'cljs b2
@@ -172,21 +181,21 @@
         (describe "when a connection matching current file extension doesn't exist"
           (it "returns nil"
             ;; for clj
-            (with-repl-buffer ses-name 'clj b1
+            (with-repl-buffer ses-name 'clj _b1
               (with-temp-buffer
                 (setq major-mode 'clojurescript-mode)
                 (expect (cider-current-repl) :to-equal nil)))
 
             ;; for cljs
-            (with-repl-buffer ses-name 'cljs b2
+            (with-repl-buffer ses-name 'cljs _b2
               (with-temp-buffer
                 (setq major-mode 'clojure-mode)
                 (expect (cider-current-repl) :to-equal nil))))))))
 
   (describe "when multiple sessions exist"
     (it "always returns the most recently used connection"
-      (let ((a-dir "/tmp/a-dir")
-            (b-dir "/tmp/b-dir"))
+      (let ((a-dir (expand-file-name "/tmp/a-dir"))
+            ) ;; (b-dir (expand-file-name "/tmp/b-dir"))
         (let ((default-directory a-dir))
           (with-repl-buffer ses-name 'clj bb1
             (with-repl-buffer ses-name 'cljs bb2
@@ -239,8 +248,8 @@
 
   (describe "when multiple sessions exist"
     (it "always returns the most recently used connection"
-      (let ((a-dir "/tmp/a-dir")
-            (b-dir "/tmp/b-dir"))
+      (let ((a-dir (expand-file-name "/tmp/a-dir"))
+            (b-dir (expand-file-name "/tmp/b-dir")))
         (let ((default-directory a-dir))
           (with-repl-buffer ses-name 'clj bb1
             (with-repl-buffer ses-name 'cljs bb2
@@ -271,9 +280,93 @@
                         (expect (cider-repls) :to-equal (list bb2 bb1))
                         (expect (cider-repls 'cljs) :to-equal (list bb2)))))))))))))
 
+  (describe "when multiple sessions exist and cider-merge-sessions is set to :project"
+    (it "always returns all connections associated with a project"
+      (let ((proj-dir (expand-file-name "/tmp/proj-dir"))
+            (cider-merge-sessions 'project))
+        (let ((default-directory proj-dir))
+          (with-repl-buffer ses-name 'clj bb1
+            (with-repl-buffer ses-name 'cljs bb2
+              (with-repl-buffer ses-name2 'clj b1
+                (with-repl-buffer ses-name2 'cljs b2
+
+                  (expect (cider-repls) :to-have-same-items-as (list b2 b1 bb2 bb1))
+
+                  (switch-to-buffer bb1)
+                  (expect (cider-repls) :to-have-same-items-as (list b2 b1 bb2 bb1))
+
+                  ;; follows type arguments
+                  (expect (cider-repls 'clj) :to-have-same-items-as (list b1 bb1))
+                  (expect (cider-repls 'cljs) :to-have-same-items-as (list b2 bb2))
+
+                  (switch-to-buffer bb2)
+                  ;; follows file type
+                  (with-temp-buffer
+                    (setq major-mode 'clojure-mode)
+                    (expect (cider-repls) :to-have-same-items-as (list b2 b1 bb2 bb1))
+                    (expect (cider-repls 'clj) :to-have-same-items-as (list b1 bb1)))
+
+                  (with-temp-buffer
+                    (setq major-mode 'clojurescript-mode)
+                    (expect (cider-repls) :to-have-same-items-as (list b2 b1 bb2 bb1))
+                    (expect (cider-repls 'cljs) :to-have-same-items-as (list b2 bb2))))))))))
+    (it "only returns the connections of the active project"
+      (let ((a-dir (expand-file-name "/tmp/a-dir"))
+            (b-dir (expand-file-name "/tmp/b-dir"))
+            (cider-merge-sessions 'project))
+        (let ((default-directory a-dir))
+          (with-repl-buffer ses-name 'clj bb1
+            (with-repl-buffer ses-name 'cljs bb2
+              (let ((default-directory b-dir))
+                (with-repl-buffer ses-name2 'clj b1
+                  (with-repl-buffer ses-name2 'cljs b2
+
+                    (expect (cider-repls) :to-have-same-items-as (list b2 b1))
+
+                    (switch-to-buffer bb1)
+                    (expect (cider-repls) :to-have-same-items-as (list bb2 bb1))
+
+                    ;; follows type arguments
+                    (expect (cider-repls 'clj) :to-have-same-items-as (list bb1))
+                    (expect (cider-repls 'cljs) :to-have-same-items-as (list bb2))
+
+                    (switch-to-buffer bb2)
+                    ;; follows file type
+                    (let ((default-directory b-dir))
+                      (with-temp-buffer
+                        (setq major-mode 'clojure-mode)
+                        (expect (cider-repls) :to-have-same-items-as (list b2 b1))
+                        (expect (cider-repls 'clj) :to-have-same-items-as (list b1))))
+
+                    (let ((default-directory a-dir))
+                      (with-temp-buffer
+                        (setq major-mode 'clojurescript-mode)
+                        (expect (cider-repls) :to-have-same-items-as (list bb2 bb1))
+                        (expect (cider-repls 'cljs) :to-have-same-items-as (list bb2)))))))))))))
+
+  (describe "when multiple sessions exist and cider-combine-merge-sessions is set to :host"
+    (before-each
+      (spy-on 'cider--gather-session-params :and-call-fake (lambda (session)
+                                                             (if (string-equal (car session) "local")
+                                                                  '(:host "localhost")
+                                                                '(:host "remotehost")))))
+    (it "returns only the sessions associated with the current session's host"
+      (let ((cider-merge-sessions 'host)
+            (local-session "local")
+            (remote-session "remote")
+            (proj-dir (expand-file-name "/tmp/proj-dir")))
+        (let ((default-directory proj-dir))
+          (with-repl-buffer local-session 'clj l1
+            (with-repl-buffer local-session 'clj l2
+              (with-repl-buffer remote-session 'clj r1
+                (switch-to-buffer r1)
+                (expect (cider-repls) :to-have-same-items-as (list r1))
+                (switch-to-buffer l1)
+                (expect (cider-repls) :to-have-same-items-as (list l1 l2)))))))))
+
   (describe "killed buffers"
     (it "do not show up in it"
-      (let ((default-directory "/tmp/some-dir"))
+      (let ((default-directory (expand-file-name "/tmp/some-dir")))
         (cider-test-with-buffers
          (a b)
          (let ((session (list "some-session" a b)))
@@ -285,6 +378,26 @@
            (expect (cider-repls) :to-equal (list a b))
            (kill-buffer b)
            (expect (cider-repls) :to-equal (list a))
+           (sesman-unregister 'CIDER session))))))
+
+  (describe "cljs capability"
+    (it "Upgraded clj repl counts as cljs"
+      (let ((default-directory (expand-file-name "/tmp/some-dir")))
+        (cider-test-with-buffers
+         (a b)
+         (let ((session (list "some-session" a b)))
+           (with-current-buffer a
+             (setq cider-repl-type 'clj))
+           (with-current-buffer b
+             (setq cider-repl-type 'cljs))
+           (sesman-register 'CIDER session)
+           (expect (cider-repls 'cljs) :to-equal (list b))
+
+           (with-current-buffer a
+             (setf cider-connection-capabilities
+                   (append cider-connection-capabilities '(cljs))))
+
+           (expect (cider-repls) :to-equal (list a b))
            (sesman-unregister 'CIDER session)))))))
 
 (describe "cider--connection-info"
@@ -312,7 +425,7 @@
 
 (describe "cider--close-connection"
   (it "removes the REPL from sesman session"
-    (let ((default-directory "/tmp/some-dir"))
+    (let ((default-directory (expand-file-name "/tmp/some-dir")))
       (cider-test-with-buffers
        (a b)
        (let ((session (list "some-session" a b)))
@@ -329,7 +442,7 @@
          (sesman-unregister 'CIDER session))))))
 
 (describe "cider-format-connection-params"
-  (describe "correctly abbreviates short directory names"
+  (it "correctly abbreviates short directory names"
     (expect (cider-format-connection-params "%J" '(:project-dir "~"))
             :to-equal "~")
     (expect (cider-format-connection-params "%j" '(:project-dir "~"))
@@ -365,7 +478,7 @@
     (expect 'y-or-n-p :to-have-been-called-times 3)))
 
 (describe "cider-compatible-middleware-version-p"
-  (describe "correctly check compatible required and middleware versions"
+  (it "correctly checks compatible required and middleware versions"
     (expect (cider--compatible-middleware-version-p "0.24.0" "0.24.1")
             :to-be t)
     (expect (cider--compatible-middleware-version-p "0.24.1" "0.23.2")
@@ -380,3 +493,35 @@
             :to-be t)
     (expect (cider--compatible-middleware-version-p "1.25.3" "1.25.2-alpha2")
             :to-be t)))
+
+(defun cider-connection-tests-dummy-function (a b c d)
+  "A B C D."
+  ;; See https://github.com/clojure-emacs/cider/issues/3402
+  (error "I should never be invoked!"))
+
+(describe "cider-format-connection-params"
+  (it "Generates a pretty string. `:repl-type' can be symbol." ;; https://github.com/clojure-emacs/cider/issues/3402
+    (expect (cider-format-connection-params nrepl-repl-buffer-name-template '(:project-dir "~/project"))
+            :to-equal "*cider-repl ~/project:localhost:(unknown)*")
+    (expect (cider-format-connection-params nrepl-repl-buffer-name-template '(:host "localhost"
+                                                                                    :port 12345
+                                                                                    :project-dir "/Users/me/myproject"
+                                                                                    :repl-type clj
+                                                                                    :cljs-repl-type shadow))
+            :to-equal "*cider-repl me/myproject:localhost:12345(clj)*")
+
+    (expect (cider-format-connection-params nrepl-repl-buffer-name-template '(:host "localhost"
+                                                                                    :port 12345
+                                                                                    :project-dir "/Users/me/myproject"
+                                                                                    :repl-type cljs
+                                                                                    :cljs-repl-type shadow))
+            :to-equal "*cider-repl me/myproject:localhost:12345(cljs:shadow)*"))
+
+  (it "Never invokes symbols as functions (Emacs 29 feature)"
+    (expect (functionp 'cider-connection-tests-dummy-function)
+            :to-equal t)
+    (expect (cider-format-connection-params nrepl-repl-buffer-name-template '(:host "localhost"
+                                                                                    :port 12345
+                                                                                    :project-dir "/Users/me/myproject"
+                                                                                    :repl-type cider-connection-tests-dummy-function))
+            :to-equal "*cider-repl me/myproject:localhost:12345(cider-connection-tests-dummy-function)*")))

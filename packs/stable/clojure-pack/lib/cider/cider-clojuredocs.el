@@ -1,8 +1,8 @@
 ;;; cider-clojuredocs.el --- ClojureDocs integration -*- lexical-binding: t -*-
 
-;; Copyright © 2014-2020 Bozhidar Batsov and CIDER contributors
+;; Copyright © 2014-2023 Bozhidar Batsov and CIDER contributors
 ;;
-;; Author: Bozhidar Batsov <bozhidar@batsov.com>
+;; Author: Bozhidar Batsov <bozhidar@batsov.dev>
 
 ;; This program is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -28,7 +28,6 @@
 (require 'cider-client)
 (require 'cider-common)
 (require 'subr-x)
-(require 'cider-compat)
 (require 'cider-popup)
 
 (require 'nrepl-dict)
@@ -44,19 +43,20 @@
   (thread-first `("op" "clojuredocs-lookup"
                   "ns" ,ns
                   "sym" ,sym)
-    (cider-nrepl-send-sync-request)
-    (nrepl-dict-get "clojuredocs")))
+                (cider-nrepl-send-sync-request)
+                (nrepl-dict-get "clojuredocs")))
 
 (defun cider-sync-request:clojuredocs-refresh ()
   "Refresh the ClojureDocs cache."
   (thread-first '("op" "clojuredocs-refresh-cache")
-    (cider-nrepl-send-sync-request)
-    (nrepl-dict-get "status")))
+                (cider-nrepl-send-sync-request)
+                (nrepl-dict-get "status")))
 
 (defun cider-clojuredocs-replace-special (name)
   "Convert the dashes in NAME to a ClojureDocs friendly format.
 We need to handle \"?\", \".\", \"..\" and \"/\"."
-  (thread-last name
+  (thread-last
+    name
     (replace-regexp-in-string "\\?" "_q")
     (replace-regexp-in-string "\\(\\.+\\)" "_\\1")
     (replace-regexp-in-string "/" "fs")))
@@ -100,6 +100,8 @@ opposite of what that option dictates."
   "Create a new ClojureDocs buffer with CONTENT."
   (with-current-buffer (cider-popup-buffer cider-clojuredocs-buffer t)
     (read-only-mode -1)
+    (set-syntax-table clojure-mode-syntax-table)
+    (local-set-key (kbd "C-c C-d C-c") 'cider-clojuredocs)
     (insert content)
     (cider-popup-buffer-mode 1)
     (view-mode 1)
@@ -119,7 +121,11 @@ opposite of what that option dictates."
     (insert "\n== See Also\n\n")
     (if-let ((see-alsos (nrepl-dict-get dict "see-alsos")))
         (dolist (see-also see-alsos)
-          (insert (format "* %s\n" see-also)))
+          (insert-text-button (format "* %s\n" see-also)
+                              'sym see-also
+                              'action (lambda (btn)
+                                        (cider-clojuredocs-lookup (button-get btn 'sym)))
+                              'help-echo (format "Press Enter or middle click to jump to %s" see-also)))
       (insert "Not available\n"))
     (insert "\n== Examples\n\n")
     (if-let ((examples (nrepl-dict-get dict "examples")))
@@ -138,7 +144,13 @@ opposite of what that option dictates."
 (defun cider-clojuredocs-lookup (sym)
   "Look up the ClojureDocs documentation for SYM."
   (let ((docs (cider-sync-request:clojuredocs-lookup (cider-current-ns) sym)))
-    (pop-to-buffer (cider-create-clojuredocs-buffer (cider-clojuredocs--content docs)))))
+    (pop-to-buffer (cider-create-clojuredocs-buffer (cider-clojuredocs--content docs)))
+    ;; highlight the symbol in question in the docs buffer
+    (highlight-regexp
+     (regexp-quote
+      (or (cadr (split-string sym "/"))
+          sym))
+     'bold)))
 
 ;;;###autoload
 (defun cider-clojuredocs (&optional arg)

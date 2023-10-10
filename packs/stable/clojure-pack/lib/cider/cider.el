@@ -1,18 +1,18 @@
 ;;; cider.el --- Clojure Interactive Development Environment that Rocks -*- lexical-binding: t -*-
 
 ;; Copyright © 2012-2013 Tim King, Phil Hagelberg, Bozhidar Batsov
-;; Copyright © 2013-2020 Bozhidar Batsov, Artur Malabarba and CIDER contributors
+;; Copyright © 2013-2023 Bozhidar Batsov, Artur Malabarba and CIDER contributors
 ;;
 ;; Author: Tim King <kingtim@gmail.com>
 ;;         Phil Hagelberg <technomancy@gmail.com>
-;;         Bozhidar Batsov <bozhidar@batsov.com>
+;;         Bozhidar Batsov <bozhidar@batsov.dev>
 ;;         Artur Malabarba <bruce.connor.am@gmail.com>
 ;;         Hugo Duncan <hugo@hugoduncan.org>
 ;;         Steve Purcell <steve@sanityinc.com>
-;; Maintainer: Bozhidar Batsov <bozhidar@batsov.com>
+;; Maintainer: Bozhidar Batsov <bozhidar@batsov.dev>
 ;; URL: http://www.github.com/clojure-emacs/cider
-;; Version: 1.0.0-snapshot
-;; Package-Requires: ((emacs "25") (clojure-mode "5.12") (parseedn "0.2") (pkg-info "0.4") (queue "0.2") (spinner "1.7") (seq "2.22") (sesman "0.3.2"))
+;; Version: 1.8.0-snapshot
+;; Package-Requires: ((emacs "26") (clojure-mode "5.17.0") (parseedn "1.2.0") (queue "0.2") (spinner "1.7") (seq "2.22") (sesman "0.3.2") (transient "0.4.1"))
 ;; Keywords: languages, clojure, cider
 
 ;; This program is free software: you can redistribute it and/or modify
@@ -83,55 +83,49 @@
 (require 'cider-connection)
 (require 'cider-mode)
 (require 'cider-common)
-(require 'cider-compat)
 (require 'cider-debug)
 (require 'cider-util)
 
+(require 'cl-lib)
 (require 'tramp-sh)
 (require 'subr-x)
 (require 'seq)
 (require 'sesman)
+(require 'package)
 
-(defconst cider-version "1.0.0-snapshot"
-  "Fallback version used when it cannot be extracted automatically.
-Normally it won't be used, unless `pkg-info' fails to extract the
-version from the CIDER package or library.")
+(defconst cider-version "1.8.0-snapshot"
+  "The current version of CIDER.")
 
-(defconst cider-codename "Nesebar"
+(defconst cider-codename "Geneva"
   "Codename used to denote stable releases.")
 
 (defcustom cider-lein-command
   "lein"
   "The command used to execute Leiningen."
-  :type 'string
-  :group 'cider)
+  :type 'string)
 
 (defcustom cider-lein-global-options
   nil
   "Command global options used to execute Leiningen (e.g.: -o for offline)."
   :type 'string
-  :group 'cider
   :safe #'stringp)
 
 (defcustom cider-lein-parameters
   "repl :headless :host localhost"
   "Params passed to Leiningen to start an nREPL server via `cider-jack-in'."
   :type 'string
-  :group 'cider
   :safe #'stringp)
 
 (defcustom cider-boot-command
   "boot"
   "The command used to execute Boot."
   :type 'string
-  :group 'cider
   :package-version '(cider . "0.9.0"))
 
 (defcustom cider-boot-global-options
   nil
   "Command global options used to execute Boot (e.g.: -c for checkouts)."
   :type 'string
-  :group 'cider
   :safe #'stringp
   :package-version '(cider . "0.14.0"))
 
@@ -139,7 +133,6 @@ version from the CIDER package or library.")
   "repl -s -b localhost wait"
   "Params passed to boot to start an nREPL server via `cider-jack-in'."
   :type 'string
-  :group 'cider
   :safe #'stringp
   :package-version '(cider . "0.9.0"))
 
@@ -153,7 +146,6 @@ Don't use clj here, as it doesn't work when spawned from Emacs due to it
 using rlwrap.  If on Windows and no \"clojure\" executable is found we
 default to \"powershell\"."
   :type 'string
-  :group 'cider
   :safe #'stringp
   :package-version '(cider . "0.17.0"))
 
@@ -161,19 +153,25 @@ default to \"powershell\"."
   nil
   "Command line options used to execute clojure with tools.deps."
   :type 'string
-  :group 'cider
   :safe #'stringp
   :package-version '(cider . "0.17.0"))
 
 (defcustom cider-clojure-cli-parameters
-  "-m nrepl.cmdline --middleware '%s'"
-  "Params passed to clojure to start an nREPL server via `cider-jack-in'.
-This is evaluated using `format', with the first argument being the Clojure
-vector of middleware variables as a string."
+  nil
+  "Params passed to clojure cli to start an nREPL server via `cider-jack-in'."
   :type 'string
-  :group 'cider
   :safe #'stringp
-  :package-version '(cider . "0.17.0"))
+  :package-version '(cider . "1.8.0"))
+
+(defcustom cider-clojure-cli-aliases
+  nil
+  "A list of aliases to include when using the clojure cli.
+Alias names should be of the form \":foo:bar\".
+Leading \"-A\" \"-M\" \"-T\" or \"-X\" are stripped from aliases
+then concatenated into the \"-M[your-aliases]:cider/nrepl\" form."
+  :type 'string
+  :safe #'stringp
+  :package-version '(cider . "1.1"))
 
 (defcustom cider-shadow-cljs-command
   "npx shadow-cljs"
@@ -181,7 +179,6 @@ vector of middleware variables as a string."
 
 By default we favor the project-specific shadow-cljs over the system-wide."
   :type 'string
-  :group 'cider
   :safe #'stringp
   :package-version '(cider . "0.17.0"))
 
@@ -189,7 +186,6 @@ By default we favor the project-specific shadow-cljs over the system-wide."
   ""
   "Command line options used to execute shadow-cljs (e.g.: -v for verbose mode)."
   :type 'string
-  :group 'cider
   :safe #'stringp
   :package-version '(cider . "0.17.0"))
 
@@ -197,23 +193,20 @@ By default we favor the project-specific shadow-cljs over the system-wide."
   "server"
   "Params passed to shadow-cljs to start an nREPL server via `cider-jack-in'."
   :type 'string
-  :group 'cider
   :safe #'stringp
   :package-version '(cider . "0.17.0"))
 
 (defcustom cider-gradle-command
-  "gradle"
+  "./gradlew"
   "The command used to execute Gradle."
   :type 'string
-  :group 'cider
   :safe #'stringp
   :package-version '(cider . "0.10.0"))
 
 (defcustom cider-gradle-global-options
-  "--no-daemon"
+  ""
   "Command line options used to execute Gradle (e.g.: -m for dry run)."
   :type 'string
-  :group 'cider
   :safe #'stringp
   :package-version '(cider . "0.14.0"))
 
@@ -221,12 +214,61 @@ By default we favor the project-specific shadow-cljs over the system-wide."
   "clojureRepl"
   "Params passed to gradle to start an nREPL server via `cider-jack-in'."
   :type 'string
-  :group 'cider
   :safe #'stringp
   :package-version '(cider . "0.10.0"))
 
-(define-obsolete-variable-alias 'cider-default-repl-command 'cider-jack-in-default)
-(defcustom cider-jack-in-default (if (executable-find "clojure") 'clojure-cli 'lein)
+(defcustom cider-babashka-command
+  "bb"
+  "The command used to execute Babashka."
+  :type 'string
+  :safe #'stringp
+  :package-version '(cider . "1.2.0"))
+
+(defcustom cider-babashka-global-options
+  nil
+  "Command line options used to execute Babashka."
+  :type 'string
+  :safe #'stringp
+  :package-version '(cider . "1.2.0"))
+
+(defcustom cider-babashka-parameters
+  "nrepl-server localhost:0"
+  "Params passed to babashka to start an nREPL server via `cider-jack-in'."
+  :type 'string
+  :safe #'stringp
+  :package-version '(cider . "1.2.0"))
+
+(defcustom cider-nbb-command
+  "nbb"
+  "The command used to execute nbb."
+  :type 'string
+  :safe #'stringp
+  :package-version '(cider . "1.6.0"))
+
+(defcustom cider-nbb-global-options
+  nil
+  "Command line options used to execute nbb."
+  :type 'string
+  :safe #'stringp
+  :package-version '(cider . "1.6.0"))
+
+(defcustom cider-nbb-parameters
+  "nrepl-server"
+  "Params passed to nbb to start an nREPL server via `cider-jack-in'."
+  :type 'string
+  :safe #'stringp
+  :package-version '(cider . "1.6.0"))
+
+(make-obsolete-variable 'cider-lein-global-options 'cider-lein-parameters "1.8.0")
+(make-obsolete-variable 'cider-boot-global-options 'cider-boot-parameters "1.8.0")
+(make-obsolete-variable 'cider-clojure-cli-global-options 'cider-clojure-cli-parameters "1.8.0")
+(make-obsolete-variable 'cider-shadow-cljs-global-options 'cider-shadow-cljs-parameters "1.8.0")
+(make-obsolete-variable 'cider-gradle-global-options 'cider-gradle-parameters "1.8.0")
+(make-obsolete-variable 'cider-babashka-global-options 'cider-babashka-parameters "1.8.0")
+(make-obsolete-variable 'cider-nbb-global-options 'cider-nbb-parameters "1.8.0")
+
+(defcustom cider-jack-in-default
+  (if (executable-find "clojure") 'clojure-cli 'lein)
   "The default tool to use when doing `cider-jack-in' outside a project.
 This value will only be consulted when no identifying file types, i.e.
 project.clj for leiningen or build.boot for boot, could be found.
@@ -238,8 +280,9 @@ to Leiningen."
                  (const boot)
                  (const clojure-cli)
                  (const shadow-cljs)
-                 (const gradle))
-  :group 'cider
+                 (const gradle)
+                 (const babashka)
+                 (const nbb))
   :safe #'symbolp
   :package-version '(cider . "0.9.0"))
 
@@ -257,8 +300,9 @@ command when there is no ambiguity."
                  (const clojure-cli)
                  (const shadow-cljs)
                  (const gradle)
+                 (const babashka)
+                 (const nbb)
                  (const :tag "Always ask" nil))
-  :group 'cider
   :safe #'symbolp
   :package-version '(cider . "0.13.0"))
 
@@ -270,7 +314,6 @@ When set to nil `cider-jack-in' will fail."
   :type '(choice (const :tag "always" t)
                  (const warn)
                  (const :tag "never" nil))
-  :group 'cider
   :safe #'symbolp
   :package-version '(cider . "0.15.0"))
 
@@ -281,23 +324,21 @@ The label is optional so that \\='(\"host\" \"port\") will suffice.
 This variable is used by `cider-connect'."
   :type '(repeat (list (string :tag "label")
                        (string :tag "host")
-                       (string :tag "port")))
-  :group 'cider)
+                       (string :tag "port"))))
 
 (defcustom cider-connected-hook nil
   "List of functions to call when connected to Clojure nREPL server."
   :type 'hook
-  :group 'cider
   :package-version '(cider . "0.9.0"))
 
 (defcustom cider-disconnected-hook nil
   "List of functions to call when disconnected from the Clojure nREPL server."
   :type 'hook
-  :group 'cider
   :package-version '(cider . "0.9.0"))
 
 (defcustom cider-inject-dependencies-at-jack-in t
-  "When nil, do not inject repl dependencies (most likely nREPL middlewares) at `cider-jack-in' time."
+  "When nil, do not inject repl dependencies at `cider-jack-in' time.
+The repl dependendcies are most likely to be nREPL middlewares."
   :type 'boolean
   :safe #'booleanp
   :version '(cider . "0.11.0"))
@@ -308,18 +349,38 @@ This variable is used by `cider-connect'."
   :safe #'booleanp
   :version '(cider . "0.15.0"))
 
-(defvar cider-ps-running-nrepls-command "ps u | grep leiningen"
+(defvar cider-ps-running-lein-nrepls-command "ps u | grep leiningen"
   "Process snapshot command used in `cider-locate-running-nrepl-ports'.")
 
-(defvar cider-ps-running-nrepl-path-regexp-list
+(defvar cider-ps-running-lein-nrepl-path-regexp-list
   '("\\(?:leiningen.original.pwd=\\)\\(.+?\\) -D"
     "\\(?:-classpath +:?\\(.+?\\)/self-installs\\)")
   "Regexp list to get project paths.
-Extract project paths from output of `cider-ps-running-nrepls-command'.
+Extract project paths from output of `cider-ps-running-lein-nrepls-command'.
 Sub-match 1 must be the project path.")
 
 (defvar cider-host-history nil
   "Completion history for connection hosts.")
+
+(defvar cider-jack-in-universal-options
+  '((clojure-cli (:prefix-arg 1 :cmd (:jack-in-type clj  :project-type clojure-cli :edit-project-dir t)))
+    (lein        (:prefix-arg 2 :cmd (:jack-in-type clj  :project-type lein :edit-project-dir t)))
+    (babashka    (:prefix-arg 3 :cmd (:jack-in-type clj  :project-type babashka :edit-project-dir t)))
+    (nbb         (:prefix-arg 4 :cmd (:jack-in-type cljs :project-type nbb :cljs-repl-type nbb :edit-project-dir t))))
+  "The list of project tools that are supported by the universal jack in command.
+
+Each item in the list consists of the tool name and its plist options.
+
+The plist supports the following keys
+
+- :prefix-arg the numerical prefix arg to use to jack in to the tool.
+
+- :cmd a plist of instructions how to invoke the jack in command, with keys
+
+  - :jack-in-type 'clj to start a clj repl and 'cljs for a cljs repl.
+
+  - &rest the same set of params supported by the `cider-jack-in-clj' and
+    `cider-jack-in-cljs' commands.")
 
 ;;;###autoload
 (defun cider-version ()
@@ -333,23 +394,74 @@ Sub-match 1 must be the project path.")
     ('lein        cider-lein-command)
     ('boot        cider-boot-command)
     ('clojure-cli cider-clojure-cli-command)
+    ('babashka    cider-babashka-command)
     ('shadow-cljs cider-shadow-cljs-command)
     ('gradle      cider-gradle-command)
+    ('nbb         cider-nbb-command)
     (_            (user-error "Unsupported project type `%S'" project-type))))
+
+(defcustom cider-enrich-classpath nil
+  "If t, use enrich-classpath for adding sources/javadocs to the classpath.
+
+enrich-classpath is a Clojure CLI shim, and Leiningen plugin.
+
+This classpath expansion is done in a clean manner,
+without interfering with classloaders."
+  :type 'boolean
+  :package-version '(cider . "1.2.0")
+  :safe #'booleanp)
+
+(defun cider--get-enrich-classpath-lein-script ()
+  "Returns the location of enrich-classpath's lein.sh wrapper script."
+  (when-let ((cider-location (locate-library "cider.el" t)))
+    (concat (file-name-directory cider-location)
+            "lein.sh")))
+
+(defun cider--get-enrich-classpath-clojure-cli-script ()
+  "Returns the location of enrich-classpath's clojure.sh wrapper script."
+  (when-let ((cider-location (locate-library "cider.el" t)))
+    (concat (file-name-directory cider-location)
+            "clojure.sh")))
 
 (defun cider-jack-in-resolve-command (project-type)
   "Determine the resolved file path to `cider-jack-in-command'.
 Throws an error if PROJECT-TYPE is unknown."
   (pcase project-type
-    ('lein (cider--resolve-command cider-lein-command))
+    ('lein (let ((r (cider--resolve-command cider-lein-command)))
+             (if (and cider-enrich-classpath
+                      (not (eq system-type 'windows-nt))
+                      (executable-find (cider--get-enrich-classpath-lein-script)))
+                 (concat "bash " ;; don't assume lein.sh is executable - MELPA might change that
+                         (cider--get-enrich-classpath-lein-script)
+                         " "
+                         r)
+               r)))
     ('boot (cider--resolve-command cider-boot-command))
-    ('clojure-cli (cider--resolve-command cider-clojure-cli-command))
+    ('clojure-cli (if (and cider-enrich-classpath
+                           (not (eq system-type 'windows-nt))
+                           (executable-find (cider--get-enrich-classpath-clojure-cli-script)))
+                      (concat "bash " ;; don't assume clojure.sh is executable - MELPA might change that
+                              (cider--get-enrich-classpath-clojure-cli-script)
+                              " "
+                              (cider--resolve-command cider-clojure-cli-command))
+                    (cider--resolve-command cider-clojure-cli-command)))
+    ('babashka (cider--resolve-command cider-babashka-command))
     ;; here we have to account for the possibility that the command is either
     ;; "npx shadow-cljs" or just "shadow-cljs"
     ('shadow-cljs (let ((parts (split-string cider-shadow-cljs-command)))
                     (when-let* ((command (cider--resolve-command (car parts))))
                       (mapconcat #'identity (cons command (cdr parts)) " "))))
-    ('gradle (cider--resolve-command cider-gradle-command))
+    ;; TODO: Address the duplicated code below.
+    ;; here we have to account for the possibility that the command is either
+    ;; "nbb" (default) or "npx nbb".
+    ('nbb (let ((parts (split-string cider-nbb-command)))
+            (when-let* ((command (cider--resolve-command (car parts))))
+              (mapconcat #'identity (cons command (cdr parts)) " "))))
+    ;; here we have to account for use of the Gradle wrapper which is
+    ;; a shell script within their project, so if they have a clearly
+    ;; relative path like "./gradlew" use locate file instead of checking
+    ;; the exec-path
+    ('gradle (cider--resolve-project-command cider-gradle-command))
     (_ (user-error "Unsupported project type `%S'" project-type))))
 
 (defun cider-jack-in-global-options (project-type)
@@ -358,8 +470,10 @@ Throws an error if PROJECT-TYPE is unknown."
     ('lein        cider-lein-global-options)
     ('boot        cider-boot-global-options)
     ('clojure-cli cider-clojure-cli-global-options)
+    ('babashka    cider-babashka-global-options)
     ('shadow-cljs cider-shadow-cljs-global-options)
     ('gradle      cider-gradle-global-options)
+    ('nbb         cider-nbb-global-options)
     (_            (user-error "Unsupported project type `%S'" project-type))))
 
 (defun cider-jack-in-params (project-type)
@@ -371,16 +485,11 @@ Throws an error if PROJECT-TYPE is unknown."
   (pcase project-type
     ('lein        cider-lein-parameters)
     ('boot        cider-boot-parameters)
-    ('clojure-cli (format cider-clojure-cli-parameters
-                          (concat
-                           "["
-                           (mapconcat
-                            (apply-partially #'format "\"%s\"")
-                            (cider-jack-in-normalized-nrepl-middlewares)
-                            ",")
-                           "]")))
+    ('clojure-cli cider-clojure-cli-parameters)
+    ('babashka    cider-babashka-parameters)
     ('shadow-cljs cider-shadow-cljs-parameters)
     ('gradle      cider-gradle-parameters)
+    ('nbb         cider-nbb-parameters)
     (_            (user-error "Unsupported project type `%S'" project-type))))
 
 
@@ -388,20 +497,25 @@ Throws an error if PROJECT-TYPE is unknown."
 (defvar cider-jack-in-dependencies nil
   "List of dependencies where elements are lists of artifact name and version.")
 (put 'cider-jack-in-dependencies 'risky-local-variable t)
-;; We inject the newest known version of nREPL just in case
-;; your version of Boot or Leiningen is bundling an older one.
-(cider-add-to-alist 'cider-jack-in-dependencies
-                    "nrepl/nrepl" "0.8.3")
+
+(defcustom cider-injected-nrepl-version "1.0.0"
+  "The version of nREPL injected on jack-in.
+We inject the newest known version of nREPL just in case
+your version of Boot or Leiningen is bundling an older one."
+  :type 'string
+  :package-version '(cider . "1.2.0")
+  :safe #'stringp)
 
 (defvar cider-jack-in-cljs-dependencies nil
   "List of dependencies where elements are lists of artifact name and version.
 Added to `cider-jack-in-dependencies' when doing `cider-jack-in-cljs'.")
 (put 'cider-jack-in-cljs-dependencies 'risky-local-variable t)
-(cider-add-to-alist 'cider-jack-in-cljs-dependencies "cider/piggieback" "0.5.2")
+(cider-add-to-alist 'cider-jack-in-cljs-dependencies "cider/piggieback" "0.5.3")
 
 (defvar cider-jack-in-dependencies-exclusions nil
   "List of exclusions for jack in dependencies.
-Elements of the list are artifact name and list of exclusions to apply for the artifact.")
+Elements of the list are artifact name and list of exclusions to apply for
+the artifact.")
 (put 'cider-jack-in-dependencies-exclusions 'risky-local-variable t)
 
 (defconst cider-clojure-artifact-id "org.clojure/clojure"
@@ -413,8 +527,15 @@ Elements of the list are artifact name and list of exclusions to apply for the a
 (defconst cider-latest-clojure-version "1.10.1"
   "Latest supported version of Clojure.")
 
-(defconst cider-required-middleware-version "0.25.5"
+(defconst cider-required-middleware-version "0.39.0"
   "The CIDER nREPL version that's known to work properly with CIDER.")
+
+(defcustom cider-injected-middleware-version cider-required-middleware-version
+  "The version of cider-nrepl injected on jack-in.
+Should be newer than the required version for optimal results."
+  :type 'string
+  :package-version '(cider . "1.2.0")
+  :safe #'stringp)
 
 (defcustom cider-jack-in-auto-inject-clojure nil
   "Version of clojure to auto-inject into REPL.
@@ -425,12 +546,25 @@ which will be the lowest version CIDER supports.  If a string, use this as
 the version number.  If it is a list, the first element should be a string,
 specifying the artifact ID, and the second element the version number."
   :type '(choice (const :tag "None" nil)
-                 (const :tag "Latest" 'latest)
-                 (const :tag "Minimal" 'minimal)
+                 (const :tag "Latest" latest)
+                 (const :tag "Minimal" minimal)
                  (string :tag "Specific Version")
                  (list :tag "Artifact ID and Version"
                        (string :tag "Artifact ID")
                        (string :tag "Version"))))
+
+(defvar-local cider-jack-in-cmd nil
+  "The custom command used to start a nrepl server.
+This is used by `cider-jack-in`.
+
+If this variable is set, its value will be
+used as the command to start the nrepl server
+instead of the default command inferred from
+the project type.
+
+This allows for fine-grained control over the jack-in process.
+The value should be a string representing the command to start
+the nrepl server, such as \"nbb nrepl-server\".")
 
 (defvar cider-jack-in-lein-plugins nil
   "List of Leiningen plugins to be injected at jack-in.
@@ -442,8 +576,14 @@ plugin should actually be injected.  (This is useful primarily for packages
 that extend CIDER, not for users.  For example, a refactoring package might
 want to inject some middleware only when within a project context.)")
 (put 'cider-jack-in-lein-plugins 'risky-local-variable t)
-(cider-add-to-alist 'cider-jack-in-lein-plugins
-                    "cider/cider-nrepl" cider-required-middleware-version)
+
+(defvar cider-jack-in-lein-middlewares nil
+  "List of Leiningen :middleware values to be injected at jack-in.
+
+Necessary for plugins which require an explicit middleware name to be specified.
+
+Can also facilitate using middleware in a specific order.")
+(put 'cider-jack-in-lein-middlewares 'risky-local-variable t)
 
 (defvar cider-jack-in-cljs-lein-plugins nil
   "List of Leiningen plugins to be injected at jack-in.
@@ -455,15 +595,22 @@ Added to `cider-jack-in-lein-plugins' (which see) when doing
   "Return a normalized list of Leiningen plugins to be injected.
 See `cider-jack-in-lein-plugins' for the format, except that the list
 returned by this function does not include keyword arguments."
-  (thread-last cider-jack-in-lein-plugins
-    (seq-filter
-     (lambda (spec)
-       (if-let* ((pred (plist-get (seq-drop spec 2) :predicate)))
-           (funcall pred spec)
-         t)))
-    (mapcar
-     (lambda (spec)
-       (seq-take spec 2)))))
+  (let ((plugins (if cider-enrich-classpath
+                     (append cider-jack-in-lein-plugins
+                             `(("cider/cider-nrepl" ,cider-injected-middleware-version)
+                               ("mx.cider/lein-enrich-classpath" "1.18.0")))
+                   (append cider-jack-in-lein-plugins
+                           `(("cider/cider-nrepl" ,cider-injected-middleware-version))))))
+    (thread-last
+      plugins
+      (seq-filter
+       (lambda (spec)
+         (if-let* ((pred (plist-get (seq-drop spec 2) :predicate)))
+             (funcall pred spec)
+           t)))
+      (mapcar
+       (lambda (spec)
+         (seq-take spec 2))))))
 
 (defvar cider-jack-in-nrepl-middlewares nil
   "List of Clojure variable names.
@@ -487,7 +634,8 @@ Added to `cider-jack-in-nrepl-middlewares' (which see) when doing
   "Return a normalized list of middleware variable names.
 See `cider-jack-in-nrepl-middlewares' for the format, except that the list
 returned by this function only contains strings."
-  (thread-last cider-jack-in-nrepl-middlewares
+  (thread-last
+    cider-jack-in-nrepl-middlewares
     (seq-filter
      (lambda (spec)
        (or (not (listp spec))
@@ -506,6 +654,13 @@ LIST should have the form (ARTIFACT-NAME ARTIFACT-VERSION).  The returned
 string is quoted for passing as argument to an inferior shell."
   (concat "-d " (shell-quote-argument (format "%s:%s" (car list) (cadr list)))))
 
+(defun cider--jack-in-required-dependencies ()
+  "Returns the required CIDER deps.
+They are normally added to `cider-jack-in-dependencies',
+unless it's a Lein project."
+  `(("nrepl/nrepl" ,cider-injected-nrepl-version)
+    ("cider/cider-nrepl" ,cider-injected-middleware-version)))
+
 (defun cider-boot-dependencies (dependencies)
   "Return a list of boot artifact strings created from DEPENDENCIES."
   (concat (mapconcat #'cider--list-as-boot-artifact dependencies " ")
@@ -520,17 +675,60 @@ string is quoted for passing as argument to an inferior shell."
                      " ")
           " " params))
 
-(defun cider-boot-jack-in-dependencies (global-opts params dependencies plugins middlewares)
+(defun cider-boot-jack-in-dependencies (global-opts params dependencies middlewares)
   "Create boot jack-in dependencies.
 Does so by concatenating GLOBAL-OPTS, DEPENDENCIES,
-PLUGINS and MIDDLEWARES.  PARAMS and MIDDLEWARES are passed on to
-`cider-boot-middleware-task` before concatenating and DEPENDENCIES and PLUGINS
+and MIDDLEWARES.  PARAMS and MIDDLEWARES are passed on to
+`cider-boot-middleware-task` before concatenating and DEPENDENCIES
  are passed on to `cider-boot-dependencies`."
   (concat global-opts
           (unless (seq-empty-p global-opts) " ")
           "-i \"(require 'cider.tasks)\" " ;; Note the space at the end here
-          (cider-boot-dependencies (append dependencies plugins))
+          (cider-boot-dependencies (append (cider--jack-in-required-dependencies) dependencies))
           (cider-boot-middleware-task params middlewares)))
+
+(defun cider--gradle-dependency-notation (dependency)
+  "Returns Gradle's GAV dependency syntax.
+For a \"group/artifact\" \"version\") DEPENDENCY list
+return as group:artifact:version notation."
+  (let ((group-artifact (replace-regexp-in-string "/" ":" (car dependency)))
+        (version (cadr dependency)))
+    (format "%s:%s" group-artifact version)))
+
+(defun cider--gradle-jack-in-property (dependencies)
+  "Returns Clojurephant's dependency jack-in property.
+For DEPENDENCIES, translates to Gradle's dependency notation
+using `cider--gradle-dependency-notation`.''"
+  (if (seq-empty-p dependencies)
+      ""
+    (shell-quote-argument
+     (concat "-Pdev.clojurephant.jack-in.nrepl="
+             (mapconcat #'cider--gradle-dependency-notation dependencies ",")))))
+
+(defun cider--gradle-middleware-params (middlewares)
+  "Returns Gradle-formatted middleware params.
+Given a list of MIDDLEWARES symbols, this returns
+the Gradle parameters expected by Clojurephant's
+ClojureNRepl task."
+  (mapconcat (lambda (middleware)
+               (shell-quote-argument (concat "--middleware=" middleware)))
+             middlewares
+             " "))
+
+(defun cider-gradle-jack-in-dependencies (global-opts params dependencies middlewares)
+  "Create gradle jack in dependencies.
+Does so by concatenating GLOBAL-OPTS, DEPENDENCIES,
+and MIDDLEWARES.  GLOBAL-OPTS and PARAMS are taken as-is.
+DEPENDENCIES are translated into Gradle's typical
+group:artifact:version notation and MIDDLEWARES are
+prepared as arguments to Clojurephant's ClojureNRepl task."
+  (concat global-opts
+          (unless (seq-empty-p global-opts) " ")
+          (cider--gradle-jack-in-property (append (cider--jack-in-required-dependencies) dependencies))
+          " "
+          params
+          (unless (seq-empty-p params) " ")
+          (cider--gradle-middleware-params middlewares)))
 
 (defun cider--lein-artifact-exclusions (exclusions)
   "Return an exclusions vector described by the elements of EXCLUSIONS."
@@ -545,10 +743,22 @@ of EXCLUSIONS can be provided as well.  The returned
 string is quoted for passing as argument to an inferior shell."
   (shell-quote-argument (format "[%s %S%s]" (car list) (cadr list) (cider--lein-artifact-exclusions exclusions))))
 
-(defun cider-lein-jack-in-dependencies (global-opts params dependencies dependencies-exclusions lein-plugins)
+(defun cider--extract-lein-profiles (lein-params)
+  "Extracts a list of ('with-profile ...' and a repl command from LEIN-PARAMS).
+
+If no `with-profile' call was found,
+returns an empty string as the first member."
+  (or (when-let* ((pattern "\\(with-profiles?\\s-+\\S-+\\)")
+                  (match-start (string-match pattern lein-params))
+                  (match-end (match-end 0)))
+        (list (concat (substring lein-params match-start match-end) " ")
+              (string-trim (substring lein-params match-end))))
+      (list "" lein-params)))
+
+(defun cider-lein-jack-in-dependencies (global-opts params dependencies dependencies-exclusions lein-plugins &optional lein-middlewares)
   "Create lein jack-in dependencies.
 Does so by concatenating GLOBAL-OPTS, DEPENDENCIES, with DEPENDENCIES-EXCLUSIONS
-removed, LEIN-PLUGINS, and finally PARAMS."
+removed, LEIN-PLUGINS, LEIN-MIDDLEWARES and finally PARAMS."
   (concat
    global-opts
    (unless (seq-empty-p global-opts) " ")
@@ -561,29 +771,99 @@ removed, LEIN-PLUGINS, and finally PARAMS."
                       (seq-map (lambda (plugin)
                                  (concat "update-in :plugins conj "
                                          (cider--list-as-lein-artifact plugin)))
-                               lein-plugins))
+                               lein-plugins)
+                      (seq-map (lambda (middleware)
+                                 (concat "update-in :middleware conj "
+                                         middleware))
+                               lein-middlewares))
               " -- ")
    " -- "
-   params))
+   (if (not cider-enrich-classpath)
+       params
+     ;; enrich-classpath must be applied after the `with-profile` call, if present,
+     ;; so that it can also process the classpath that is typically expanded by the presence of a set of profiles:
+     (let* ((profiles-and-repl-call (cider--extract-lein-profiles params))
+            (profiles (car profiles-and-repl-call))
+            (repl-call (nth 1 profiles-and-repl-call)))
+       (concat profiles
+               "update-in :middleware conj cider.enrich-classpath.plugin-v2/middleware -- "
+               repl-call)))))
 
-(defun cider-clojure-cli-jack-in-dependencies (global-opts params dependencies)
+(defun cider--dedupe-deps (deps)
+  "Removes the duplicates in DEPS."
+  (cl-delete-duplicates deps :test 'equal))
+
+(defun cider--jack-in-cmd-powershell-p (command)
+  "Returns whether COMMAND is PowerShell."
+  (or (string-equal command "powershell")
+      (string-equal command "pwsh")))
+
+(defun cider--shell-quote-argument (argument &optional command)
+  "Quotes ARGUMENT like `shell-quote-argument', suitable for use with COMMAND.
+
+Uses `shell-quote-argument' to quote the ARGUMENT, unless COMMAND is given
+and refers to PowerShell, in which case it uses (some limited) PowerShell
+rules to quote it."
+  (if (cider--jack-in-cmd-powershell-p command)
+      ;; please add more PowerShell quoting rules as necessary.
+      (format "'%s'" (replace-regexp-in-string "\"" "\"\"" argument))
+    (shell-quote-argument argument)))
+
+(defun cider--powershell-encode-command (cmd-params)
+  "Base64 encode the powershell command and jack-in CMD-PARAMS for clojure-cli."
+  (let* ((quoted-params cmd-params)
+         (command (format "clojure %s" quoted-params))
+         (utf-16le-command (encode-coding-string command 'utf-16le)))
+    (format "-encodedCommand %s" (base64-encode-string utf-16le-command t))))
+
+(defun cider-clojure-cli-jack-in-dependencies (global-options params dependencies &optional command)
   "Create Clojure tools.deps jack-in dependencies.
-Does so by concatenating DEPENDENCIES, GLOBAL-OPTS and PARAMS."
-  (let ((dependencies (append dependencies cider-jack-in-lein-plugins)))
-    (concat
-     "-Sdeps '{:deps {"
-     (mapconcat #'identity
-                (seq-map (lambda (dep) (format "%s {:mvn/version \"%s\"}" (car dep) (cadr dep))) dependencies)
-                " ")
-     "}}' "
-     global-opts
-     (unless (seq-empty-p global-opts) " ")
-     params)))
+Does so by concatenating DEPENDENCIES, PARAMS and GLOBAL-OPTIONS into a
+suitable `clojure` invocation and quoting, also accounting for COMMAND if
+provided.  The main is placed in an inline alias :cider/nrepl so that if
+your aliases contain any mains, the cider/nrepl one will be the one used."
+  (let* ((all-deps (thread-last
+                     dependencies
+                     (append (cider--jack-in-required-dependencies))
+                     ;; Duplicates are never OK since they would result in
+                     ;; `java.lang.IllegalArgumentException: Duplicate key [...]`:
+                     (cider--dedupe-deps)
+                     (seq-map (lambda (dep)
+                                (if (listp (cadr dep))
+                                    (format "%s {%s}"
+                                            (car dep)
+                                            (seq-reduce
+                                             (lambda (acc v)
+                                               (concat acc (format " :%s \"%s\" " (car v) (cdr v))))
+                                             (cadr dep)
+                                             ""))
+                                  (format "%s {:mvn/version \"%s\"}" (car dep) (cadr dep)))))))
+         (middleware (mapconcat
+                      (apply-partially #'format "%s")
+                      (cider-jack-in-normalized-nrepl-middlewares)
+                      ","))
+         (main-opts (format "\"-m\" \"nrepl.cmdline\" \"--middleware\" \"[%s]\"" middleware))
+         (deps (format "{:deps {%s} :aliases {:cider/nrepl {:main-opts [%s]}}}"
+                       (string-join all-deps " ") main-opts))
+         (deps-quoted (cider--shell-quote-argument deps command)))
+    (format "%s-Sdeps %s -M%s:cider/nrepl%s"
+            ;; TODO: global-options are deprecated and should be removed in CIDER 2.0
+            (if global-options (format "%s " global-options) "")
+            deps-quoted
+            (if cider-clojure-cli-aliases
+                ;; remove exec-opts flags -A -M -T or -X from cider-clojure-cli-aliases
+                ;; concatenated with :cider/nrepl to ensure :cider/nrepl comes last
+                (let ((aliases (format "%s" (replace-regexp-in-string "^-\\(A\\|M\\|T\\|X\\)" "" cider-clojure-cli-aliases))))
+                  (if (string-prefix-p ":" aliases)
+                      aliases
+                    (concat ":" aliases)))
+              "")
+            (if params (format " %s" params) ""))))
 
 (defun cider-shadow-cljs-jack-in-dependencies (global-opts params dependencies)
   "Create shadow-cljs jack-in deps.
 Does so by concatenating GLOBAL-OPTS, DEPENDENCIES finally PARAMS."
-  (let ((dependencies (append dependencies cider-jack-in-lein-plugins)))
+  (let ((dependencies (append (cider--jack-in-required-dependencies) dependencies)))
     (concat
      global-opts
      (unless (seq-empty-p global-opts) " ")
@@ -610,42 +890,53 @@ See also `cider-jack-in-auto-inject-clojure'."
               dependencies))
     dependencies))
 
-(defun cider-inject-jack-in-dependencies (global-opts params project-type)
+(defun cider-inject-jack-in-dependencies (global-opts params project-type &optional command)
   "Return GLOBAL-OPTS and PARAMS with injected REPL dependencies.
-These are set in `cider-jack-in-dependencies', `cider-jack-in-lein-plugins' and
-`cider-jack-in-nrepl-middlewares' are injected from the CLI according to
-the used PROJECT-TYPE.  Eliminates the need for hacking profiles.clj or the
-boot script for supporting CIDER with its nREPL middleware and
-dependencies."
+These are set in `cider-jack-in-dependencies', `cider-jack-in-lein-plugins'
+and `cider-jack-in-nrepl-middlewares' are injected from the CLI according
+to the used PROJECT-TYPE, and COMMAND if provided.  Eliminates the need for
+hacking profiles.clj or the boot script for supporting CIDER with its nREPL
+middleware and dependencies."
   (pcase project-type
     ('lein (cider-lein-jack-in-dependencies
             global-opts
             params
             (cider-add-clojure-dependencies-maybe
-             cider-jack-in-dependencies)
+             (append `(("nrepl/nrepl" ,cider-injected-nrepl-version)) cider-jack-in-dependencies))
             cider-jack-in-dependencies-exclusions
-            (cider-jack-in-normalized-lein-plugins)))
+            (cider-jack-in-normalized-lein-plugins)
+            cider-jack-in-lein-middlewares))
     ('boot (cider-boot-jack-in-dependencies
             global-opts
             params
             (cider-add-clojure-dependencies-maybe
              cider-jack-in-dependencies)
-            (cider-jack-in-normalized-lein-plugins)
             (cider-jack-in-normalized-nrepl-middlewares)))
     ('clojure-cli (cider-clojure-cli-jack-in-dependencies
                    global-opts
                    params
                    (cider-add-clojure-dependencies-maybe
-                    cider-jack-in-dependencies)))
+                    cider-jack-in-dependencies)
+                   command))
+    ('babashka (concat
+                global-opts
+                (unless (seq-empty-p global-opts) " ")
+                params))
     ('shadow-cljs (cider-shadow-cljs-jack-in-dependencies
                    global-opts
                    params
                    (cider-add-clojure-dependencies-maybe
                     cider-jack-in-dependencies)))
-    ('gradle (concat
+    ('gradle (cider-gradle-jack-in-dependencies
               global-opts
-              (unless (seq-empty-p global-opts) " ")
-              params))
+              params
+              (cider-add-clojure-dependencies-maybe
+               cider-jack-in-dependencies)
+              (cider-jack-in-normalized-nrepl-middlewares)))
+    ('nbb (concat
+           global-opts
+           (unless (seq-empty-p global-opts) " ")
+           params))
     (_ (error "Unsupported project type `%S'" project-type))))
 
 
@@ -658,9 +949,18 @@ Generally you should not disable this unless you run into some faulty check."
   :safe #'booleanp
   :package-version '(cider . "0.17.0"))
 
+(defun cider-clojurescript-present-p ()
+  "Return non nil when ClojureScript is present."
+  (or
+   ;; This is nil for example for nbb.
+   (cider-library-present-p "cljs.core")
+   ;; demunge is not defined currently for normal cljs repls.
+   ;; So we end up making the two checks
+   (nrepl-dict-get (cider-sync-tooling-eval "cljs.core/demunge") "value")))
+
 (defun cider-verify-clojurescript-is-present ()
   "Check whether ClojureScript is present."
-  (unless (cider-library-present-p "cljs.core")
+  (unless (cider-clojurescript-present-p)
     (user-error "ClojureScript is not available.  See https://docs.cider.mx/cider/basics/clojurescript for details")))
 
 (defun cider-verify-piggieback-is-present ()
@@ -722,6 +1022,7 @@ Generally you should not disable this unless you run into some faulty check."
 (defcustom cider-shadow-watched-builds nil
   "Defines the list of builds `shadow-cljs' should watch."
   :type '(repeat string)
+  :safe #'listp
   :package-version '(cider . "1.0"))
 
 (defcustom cider-shadow-default-options nil
@@ -742,11 +1043,17 @@ The default options of `browser-repl' and `node-repl' are also included."
 (defun cider--shadow-get-builds ()
   "Extract build names from the shadow-cljs.edn config file in the project root."
   (let ((shadow-edn (concat (clojure-project-dir) "shadow-cljs.edn")))
-    (when (file-exists-p shadow-edn)
+    (when (file-readable-p shadow-edn)
       (with-temp-buffer
         (insert-file-contents shadow-edn)
-        (let ((hash (car (parseedn-read '((shadow/env . identity))))))
-          (cider--shadow-parse-builds hash))))))
+        (condition-case err
+            (let ((hash (car (parseedn-read '((shadow/env . identity)
+                                              (env . identity))))))
+              (cider--shadow-parse-builds hash))
+          (error
+           (user-error "Found an error while reading %s with message: %s"
+                       shadow-edn
+                       (error-message-string err))))))))
 
 (defun cider-shadow-select-cljs-init-form ()
   "Generate the init form for a shadow-cljs select-only REPL.
@@ -794,11 +1101,13 @@ Figwheel for details."
   :package-version '(cider . "0.18.0"))
 
 (defun cider--figwheel-main-get-builds ()
-  "Extract build names from the <build-id>.cljs.edn config files in the project root."
+  "Extract build names from the <build-id>.cljs.edn config files.
+Fetches them in the project root."
   (when-let ((project-dir (clojure-project-dir)))
     (let ((builds (directory-files project-dir nil ".*\\.cljs\\.edn")))
       (mapcar (lambda (f) (string-match "^\\(.*\\)\\.cljs\\.edn" f)
-                (match-string 1 f)) builds))))
+                (match-string 1 f))
+              builds))))
 
 (defun cider-figwheel-main-init-form ()
   "Produce the figwheel-main ClojureScript init form."
@@ -859,24 +1168,28 @@ The supplied string will be wrapped in a do form if needed."
          '[krell.api :as krell]
          '[krell.repl])
 (def config (edn/read-string (slurp (io/file \"build.edn\"))))
-(krell/build config)
 (apply cider.piggieback/cljs-repl (krell.repl/repl-env) (mapcat identity config))"
            cider-check-krell-requirements)
+    ;; native cljs repl, no form required.
+    (nbb)
     (custom cider-custom-cljs-repl-init-form nil))
   "A list of supported ClojureScript REPLs.
 
-For each one we have its name, the form we need to evaluate in a Clojure
-REPL to start the ClojureScript REPL and functions to verify their requirements.
+For each one we have its name, and then, if the repl is not a native
+ClojureScript REPL, the form we need to evaluate in a Clojure REPL to
+switch to the ClojureScript REPL and functions to verify their
+requirements.
 
-The form should be either a string or a function producing a string.")
+The form, if any, should be either a string or a function producing a
+string.")
 
-(defun cider-register-cljs-repl-type (type init-form &optional requirements-fn)
+(defun cider-register-cljs-repl-type (type &optional init-form requirements-fn)
   "Register a new ClojureScript REPL type.
 
 Types are defined by the following:
 
 - TYPE - symbol identifier that will be used to refer to the REPL type
-- INIT-FORM - string or function (symbol) producing string
+- INIT-FORM - (optional) string or function (symbol) producing string
 - REQUIREMENTS-FN - function to check whether the REPL can be started.
 This param is optional.
 
@@ -884,8 +1197,8 @@ All this function does is modifying `cider-cljs-repl-types'.
 It's intended to be used in your Emacs config."
   (unless (symbolp type)
     (user-error "The REPL type must be a symbol"))
-  (unless (or (stringp init-form) (symbolp init-form))
-    (user-error "The init form must be a string or a symbol referring to a function"))
+  (unless (or (null init-form) (stringp init-form) (symbolp init-form))
+    (user-error "The init form must be a string or a symbol referring to a function or nil"))
   (unless (or (null requirements-fn) (symbolp requirements-fn))
     (user-error "The requirements-fn must be a symbol referring to a function"))
   (add-to-list 'cider-cljs-repl-types (list type init-form requirements-fn)))
@@ -905,8 +1218,8 @@ you're working on."
                  (const :tag "Shadow"   shadow)
                  (const :tag "Shadow w/o Server" shadow-select)
                  (const :tag "Krell"    krell)
+                 (const :tag "Nbb"      nbb)
                  (const :tag "Custom"   custom))
-  :group 'cider
   :safe #'symbolp
   :package-version '(cider . "0.17.0"))
 
@@ -924,15 +1237,16 @@ DEFAULT is the default ClojureScript REPL to offer in completion."
                              (or default (car cider--select-cljs-repl-history))))))
 
 (defun cider-cljs-repl-form (repl-type)
-  "Get the cljs REPL form for REPL-TYPE."
-  (if-let* ((repl-form (cadr (seq-find
-                              (lambda (entry)
-                                (eq (car entry) repl-type))
-                              cider-cljs-repl-types))))
-      ;; repl-form can be either a string or a function producing a string
-      (if (symbolp repl-form)
-          (funcall repl-form)
-        repl-form)
+  "Get the cljs REPL form for REPL-TYPE, if any."
+  (if-let* ((repl-type-info (seq-find
+                             (lambda (entry)
+                               (eq (car entry) repl-type))
+                             cider-cljs-repl-types)))
+      (when-let ((repl-form (cadr repl-type-info)))
+        ;; repl-form can be either a string or a function producing a string
+        (if (symbolp repl-form)
+            (funcall repl-form)
+          repl-form))
     (user-error "No ClojureScript REPL type %s found.  Please make sure that `cider-cljs-repl-types' has an entry for it" repl-type)))
 
 (defun cider-verify-cljs-repl-requirements (&optional repl-type)
@@ -987,6 +1301,7 @@ nil."
     (define-key map (kbd "j j") #'cider-jack-in-clj)
     (define-key map (kbd "j s") #'cider-jack-in-cljs)
     (define-key map (kbd "j m") #'cider-jack-in-clj&cljs)
+    (define-key map (kbd "j u") #'cider-jack-in-universal)
     (define-key map (kbd "C-j j") #'cider-jack-in-clj)
     (define-key map (kbd "C-j s") #'cider-jack-in-cljs)
     (define-key map (kbd "C-j m") #'cider-jack-in-clj&cljs)
@@ -1018,7 +1333,8 @@ PARAMS is a plist optionally containing :project-dir and :jack-in-cmd.
 With the prefix argument, allow editing of the jack in command; with a
 double prefix prompt for all these parameters."
   (interactive "P")
-  (let ((params (thread-first params
+  (let ((params (thread-first
+                  params
                   (cider--update-project-dir)
                   (cider--check-existing-session)
                   (cider--update-jack-in-cmd))))
@@ -1032,16 +1348,20 @@ double prefix prompt for all these parameters."
 (defun cider-jack-in-cljs (params)
   "Start an nREPL server for the current project and connect to it.
 PARAMS is a plist optionally containing :project-dir, :jack-in-cmd and
-:cljs-repl-type (e.g. Node, Figwheel, etc).  With the prefix argument,
+:cljs-repl-type (e.g. 'shadow, 'node, 'figwheel, etc).
+
+With the prefix argument,
 allow editing of the jack in command; with a double prefix prompt for all
 these parameters."
   (interactive "P")
-  (let ((cider-jack-in-dependencies (append cider-jack-in-dependencies cider-jack-in-cljs-dependencies))
+  (let ((cider-enrich-classpath nil) ;; ensure it's disabled for cljs projects, for now
+        (cider-jack-in-dependencies (append cider-jack-in-dependencies cider-jack-in-cljs-dependencies))
         (cider-jack-in-lein-plugins (append cider-jack-in-lein-plugins cider-jack-in-cljs-lein-plugins))
         (cider-jack-in-nrepl-middlewares (append cider-jack-in-nrepl-middlewares cider-jack-in-cljs-nrepl-middlewares))
         (orig-buffer (current-buffer)))
     ;; cider--update-jack-in-cmd relies indirectly on the above dynamic vars
-    (let ((params (thread-first params
+    (let ((params (thread-first
+                    params
                     (cider--update-project-dir)
                     (cider--check-existing-session)
                     (cider--update-jack-in-cmd))))
@@ -1056,17 +1376,22 @@ these parameters."
 (defun cider-jack-in-clj&cljs (&optional params soft-cljs-start)
   "Start an nREPL server and connect with clj and cljs REPLs.
 PARAMS is a plist optionally containing :project-dir, :jack-in-cmd and
-:cljs-repl-type (e.g. Node, Figwheel, etc).  With the prefix argument,
-allow for editing of the jack in command; with a double prefix prompt for
-all these parameters.  When SOFT-CLJS-START is non-nil, start cljs REPL
+:cljs-repl-type (e.g. 'shadow, 'node, 'fighweel, etc).
+
+With the prefix argument, allow for editing of the jack in command;
+with a double prefix prompt for all these parameters.
+
+When SOFT-CLJS-START is non-nil, start cljs REPL
 only when the ClojureScript dependencies are met."
   (interactive "P")
-  (let ((cider-jack-in-dependencies (append cider-jack-in-dependencies cider-jack-in-cljs-dependencies))
+  (let ((cider-enrich-classpath nil) ;; ensure it's disabled for cljs projects, for now
+        (cider-jack-in-dependencies (append cider-jack-in-dependencies cider-jack-in-cljs-dependencies))
         (cider-jack-in-lein-plugins (append cider-jack-in-lein-plugins cider-jack-in-cljs-lein-plugins))
         (cider-jack-in-nrepl-middlewares (append cider-jack-in-nrepl-middlewares cider-jack-in-cljs-nrepl-middlewares))
         (orig-buffer (current-buffer)))
     ;; cider--update-jack-in-cmd relies indirectly on the above dynamic vars
-    (let ((params (thread-first params
+    (let ((params (thread-first
+                    params
                     (cider--update-project-dir)
                     (cider--check-existing-session)
                     (cider--update-jack-in-cmd)
@@ -1093,11 +1418,12 @@ also be a server buffer, in which case a new session with a REPL for that
 server is created."
   (interactive "P")
   (cider-nrepl-connect
-   (let* ((other-repl (or other-repl (cider-current-repl nil 'ensure)))
+   (let* ((other-repl (or other-repl (cider-current-repl 'any 'ensure)))
           (other-params (cider--gather-connect-params nil other-repl))
           (ses-name (unless (nrepl-server-p other-repl)
                       (sesman-session-name-for-object 'CIDER other-repl))))
-     (thread-first params
+     (thread-first
+       params
        (cider--update-do-prompt)
        (append other-params)
        (plist-put :repl-init-function nil)
@@ -1107,23 +1433,28 @@ server is created."
 ;;;###autoload
 (defun cider-connect-sibling-cljs (params &optional other-repl)
   "Create a ClojureScript REPL with the same server as OTHER-REPL.
-PARAMS is a plist optionally containing :cljs-repl-type (e.g. Node,
-Figwheel, etc).  All other parameters are inferred from the OTHER-REPL.
+PARAMS is a plist optionally containing :cljs-repl-type (e.g. 'node,
+'figwheel, 'shadow, etc).
+
+All other parameters are inferred from the OTHER-REPL.
 OTHER-REPL defaults to `cider-current-repl' but in programs can also be a
 server buffer, in which case a new session for that server is created."
   (interactive "P")
-  (let* ((other-repl (or other-repl (cider-current-repl nil 'ensure)))
+  (let* ((other-repl (or other-repl (cider-current-repl 'any 'ensure)))
          (other-params (cider--gather-connect-params nil other-repl))
+         ;; type-related params from the JVM conn are undesired for a cljs conn:
+         (other-params (thread-first other-params (map-delete :repl-type) (map-delete :cljs-repl-type)))
          (ses-name (unless (nrepl-server-p other-repl)
                      (sesman-session-name-for-object 'CIDER other-repl))))
     (cider-nrepl-connect
-     (thread-first params
+     (thread-first
+       params
        (cider--update-do-prompt)
        (append other-params)
        (cider--update-cljs-type)
        (cider--update-cljs-init-function)
        (plist-put :session-name ses-name)
-       (plist-put :repl-type 'pending-cljs)))))
+       (plist-put :repl-type 'cljs)))))
 
 ;;;###autoload
 (defun cider-connect-clj (&optional params)
@@ -1132,7 +1463,8 @@ PARAMS is a plist optionally containing :host, :port and :project-dir.  On
 prefix argument, prompt for all the parameters."
   (interactive "P")
   (cider-nrepl-connect
-   (thread-first params
+   (thread-first
+     params
      (cider--update-project-dir)
      (cider--update-host-port)
      (cider--check-existing-session)
@@ -1144,35 +1476,43 @@ prefix argument, prompt for all the parameters."
 (defun cider-connect-cljs (&optional params)
   "Initialize a ClojureScript connection to an nREPL server.
 PARAMS is a plist optionally containing :host, :port, :project-dir and
-:cljs-repl-type (e.g. Node, Figwheel, etc).  On prefix, prompt for all the
+:cljs-repl-type (e.g. 'shadow, 'node, 'figwheel, etc).
+
+On prefix, prompt for all the
 parameters regardless of their supplied or default values."
   (interactive "P")
   (cider-nrepl-connect
-   (thread-first params
+   (thread-first
+     params
      (cider--update-project-dir)
      (cider--update-host-port)
      (cider--check-existing-session)
      (cider--update-cljs-type)
      (cider--update-cljs-init-function)
      (plist-put :session-name nil)
-     (plist-put :repl-type 'pending-cljs))))
+     (plist-put :repl-type 'cljs))))
 
 ;;;###autoload
 (defun cider-connect-clj&cljs (params &optional soft-cljs-start)
   "Initialize a Clojure and ClojureScript connection to an nREPL server.
 PARAMS is a plist optionally containing :host, :port, :project-dir and
-:cljs-repl-type (e.g. Node, Figwheel, etc).  When SOFT-CLJS-START is
+:cljs-repl-type (e.g. 'shadow, 'node, 'figwheel, etc).  When SOFT-CLJS-START is
 non-nil, don't start if ClojureScript requirements are not met."
   (interactive "P")
-  (let* ((params (thread-first params
+  (let* ((params (thread-first
+                   params
                    (cider--update-project-dir)
                    (cider--update-host-port)
                    (cider--check-existing-session)
                    (cider--update-cljs-type)))
-         (clj-repl (cider-connect-clj params)))
-    (if soft-cljs-start
-        (when (cider--check-cljs (plist-get params :cljs-repl-type) 'no-error)
-          (cider-connect-sibling-cljs params clj-repl))
+         (clj-params (thread-first
+                       params
+                       copy-sequence
+                       (map-delete :cljs-repl-type)))
+         (clj-repl (cider-connect-clj clj-params)))
+    (when (if soft-cljs-start
+              (cider--check-cljs (plist-get params :cljs-repl-type) 'no-error)
+            t)
       (cider-connect-sibling-cljs params clj-repl))))
 
 (defvar cider-connection-init-commands
@@ -1203,9 +1543,15 @@ non-nil, don't start if ClojureScript requirements are not met."
         (t params)))
 
 (defun cider--update-project-dir (params)
-  "Update :project-dir in PARAMS."
+  "Update :project-dir in PARAMS.
+
+Params is a plist with the following keys (non-exhaustive)
+
+ :edit-project-dir prompt (optional) ask user to confirm the project root
+ directory."
   (let* ((params (cider--update-do-prompt params))
-         (proj-dir (if (plist-get params :do-prompt)
+         (proj-dir (if (or (plist-get params :do-prompt)
+                           (plist-get params :edit-project-dir))
                        (read-directory-name "Project: "
                                             (clojure-project-dir (cider-current-dir)))
                      (plist-get params :project-dir)))
@@ -1232,7 +1578,8 @@ non-nil, don't start if ClojureScript requirements are not met."
             (setq-local buffer-file-name nil))
           (let ((default-directory proj-dir))
             (hack-dir-local-variables-non-file-buffer)
-            (thread-first params
+            (thread-first
+              params
               (plist-put :project-dir proj-dir)
               (plist-put :--context-buffer (current-buffer)))))))))
 
@@ -1261,51 +1608,63 @@ non-nil, don't start if ClojureScript requirements are not met."
 (defvar cider--jack-in-cmd-history nil
   "History list for user-specified jack-in commands.")
 
-(defun cider--powershell-encode-command (cmd-params)
-  "Base64 encode the powershell command and jack-in CMD-PARAMS for clojure-cli."
-  (let* ((quoted-params (replace-regexp-in-string "\"" "\"\"" cmd-params))
-         (command (format "clojure %s" quoted-params))
-         (utf-16le-command (encode-coding-string command 'utf-16le)))
-    (format "-encodedCommand %s" (base64-encode-string utf-16le-command t))))
+(defun cider--format-cmd (command-resolved command cmd-params)
+  "Format COMMAND-RESOLVED or COMMAND followed by CMD-PARAMS."
+  (format "%s %s" command-resolved
+          (if (cider--jack-in-cmd-powershell-p command)
+              (cider--powershell-encode-command cmd-params)
+            cmd-params)))
 
 (defun cider--update-jack-in-cmd (params)
-  "Update :jack-in-cmd key in PARAMS."
-  (let* ((params (cider--update-do-prompt params))
-         (project-dir (plist-get params :project-dir))
-         (project-type (cider-project-type project-dir))
-         (command (cider-jack-in-command project-type))
-         (command-resolved (cider-jack-in-resolve-command project-type))
-         (command-global-opts (cider-jack-in-global-options project-type))
-         (command-params (cider-jack-in-params project-type)))
-    (if command-resolved
-        (with-current-buffer (or (plist-get params :--context-buffer)
-                                 (current-buffer))
-          (let* ((command-params (if (plist-get params :do-prompt)
-                                     (read-string "nREPL server command: "
-                                                  command-params
-                                                  'cider--jack-in-nrepl-params-history)
-                                   command-params))
-                 (cmd-params (if cider-inject-dependencies-at-jack-in
-                                 (cider-inject-jack-in-dependencies command-global-opts command-params project-type)
-                               command-params)))
-            (if (or project-dir cider-allow-jack-in-without-project)
-                (when (or project-dir
-                          (eq cider-allow-jack-in-without-project t)
-                          (and (null project-dir)
-                               (eq cider-allow-jack-in-without-project 'warn)
-                               (y-or-n-p "Are you sure you want to run `cider-jack-in' without a Clojure project? ")))
-                  (let ((cmd (format "%s %s" command-resolved (if (string-equal command "powershell")
-                                                                  (cider--powershell-encode-command cmd-params)
-                                                                cmd-params))))
-                    (plist-put params :jack-in-cmd (if (or cider-edit-jack-in-command
-                                                           (plist-get params :edit-jack-in-command))
-                                                       (read-string "jack-in command: " cmd 'cider--jack-in-cmd-history)
-                                                     cmd))))
-              (user-error "`cider-jack-in' is not allowed without a Clojure project"))))
-      (user-error "The %s executable isn't on your `exec-path'" command))))
+  "Update :jack-in-cmd key in PARAMS.
+
+PARAMS is a plist with the following keys (non-exhaustive list)
+
+:project-type optional, the project type to create the command for; see
+`cider-jack-in-command' for the list of valid types)."
+  (cond
+   ((plist-get params :jack-in-cmd) params)
+   (cider-jack-in-cmd (plist-put params :jack-in-cmd cider-jack-in-cmd))
+   (t (let* ((params (cider--update-do-prompt params))
+             (project-dir (plist-get params :project-dir))
+             (params-project-type (plist-get params :project-type))
+             (project-type (or params-project-type
+                               (cider-project-type project-dir)))
+             (command (cider-jack-in-command project-type))
+             (command-resolved (cider-jack-in-resolve-command project-type))
+             ;; TODO: global-options are deprecated and should be removed in CIDER 2.0
+             (command-global-opts (cider-jack-in-global-options project-type))
+             (command-params (cider-jack-in-params project-type)))
+        (if command-resolved
+            (with-current-buffer (or (plist-get params :--context-buffer)
+                                     (current-buffer))
+              (let* ((command-params (if (plist-get params :do-prompt)
+                                         (read-string "nREPL server command: "
+                                                      command-params
+                                                      'cider--jack-in-nrepl-params-history)
+                                       command-params))
+                     (cmd-params (if cider-inject-dependencies-at-jack-in
+                                     (cider-inject-jack-in-dependencies command-global-opts command-params
+                                                                        project-type command)
+                                   command-params)))
+                (if (or project-dir cider-allow-jack-in-without-project)
+                    (when (or project-dir
+                              (eq cider-allow-jack-in-without-project t)
+                              (and (null project-dir)
+                                   (eq cider-allow-jack-in-without-project 'warn)
+                                   (or params-project-type
+                                       (y-or-n-p "Are you sure you want to run `cider-jack-in' without a Clojure project? "))))
+                      (let* ((cmd          (cider--format-cmd command-resolved command cmd-params))
+                             (edited-command (if (or cider-edit-jack-in-command
+                                                     (plist-get params :edit-jack-in-command))
+                                                 (read-string "jack-in command: " cmd 'cider--jack-in-cmd-history)
+                                               cmd)))
+                        (plist-put params :jack-in-cmd edited-command)))
+                  (user-error "`cider-jack-in' is not allowed without a Clojure project"))))
+          (user-error "The %s executable isn't on your `exec-path'" command))))))
 
 (defun cider--update-host-port (params)
-  "Update :host and :port in PARAMS."
+  "Update :host and :port; or :socket-file in PARAMS."
   (with-current-buffer (or (plist-get params :--context-buffer)
                            (current-buffer))
     (let* ((params (cider--update-do-prompt params))
@@ -1316,31 +1675,47 @@ non-nil, don't start if ClojureScript requirements are not met."
                        (if (and host port)
                            (cons host port)
                          (cider-select-endpoint)))))
-      (thread-first params
-        (plist-put :host (car endpoint))
-        (plist-put :port (cdr endpoint))))))
+      (if (equal "local-unix-domain-socket" (car endpoint))
+          (plist-put params :socket-file (cdr endpoint))
+        (thread-first
+          params
+          (plist-put :host (car endpoint))
+          (plist-put :port (cdr endpoint)))))))
 
 (defun cider--update-cljs-init-function (params)
-  "Update PARAMS :repl-init-function for cljs connections."
+  "Update repl type and any init PARAMS for cljs connections.
+
+The updated params are:
+
+:cider-repl-cljs-upgrade-pending nil if it is a cljs REPL, or t
+when the init form is required to be sent to the REPL to switch
+over to cljs.
+
+:repl-init-form The form that can switch the REPL over to cljs.
+
+:repl-init-function The fn that switches the REPL over to cljs."
   (with-current-buffer (or (plist-get params :--context-buffer)
                            (current-buffer))
     (let* ((cljs-type (plist-get params :cljs-repl-type))
            (repl-init-form (cider-cljs-repl-form cljs-type)))
-      (thread-first params
-        (plist-put :repl-init-function
-                   (lambda ()
-                     (cider--check-cljs cljs-type)
-                     ;; FIXME: ideally this should be done in the state handler
-                     (setq-local cider-cljs-repl-type cljs-type)
-                     (cider-nrepl-send-request
-                      (list "op" "eval"
-                            "ns" (cider-current-ns)
-                            "code" repl-init-form)
-                      (cider-repl-handler (current-buffer)))
-                     (when (and (buffer-live-p nrepl-server-buffer)
-                                cider-offer-to-open-cljs-app-in-browser)
-                       (cider--offer-to-open-app-in-browser nrepl-server-buffer))))
-        (plist-put :repl-init-form repl-init-form)))))
+      (if (null repl-init-form)
+          (plist-put params :cider-repl-cljs-upgrade-pending nil)
+
+        (thread-first
+          params
+          (plist-put :cider-repl-cljs-upgrade-pending t)
+          (plist-put :repl-init-function
+                     (lambda ()
+                       (cider--check-cljs cljs-type)
+                       (cider-nrepl-send-request
+                        (list "op" "eval"
+                              "ns" (cider-current-ns)
+                              "code" repl-init-form)
+                        (cider-repl-handler (current-buffer)))
+                       (when (and (buffer-live-p nrepl-server-buffer)
+                                  cider-offer-to-open-cljs-app-in-browser)
+                         (cider--offer-to-open-app-in-browser nrepl-server-buffer))))
+          (plist-put :repl-init-form repl-init-form))))))
 
 (defun cider--check-existing-session (params)
   "Ask for confirmation if a session with similar PARAMS already exists.
@@ -1360,9 +1735,8 @@ canceled the action, signal quit."
     (when session
       (unless (y-or-n-p
                (concat
-                "A session with the same parameters already exists (" (car session) ").  "
-                "You can connect a sibling REPL to it instead (recommended).  "
-                "Please, confirm the creation a new session (typing \"no\" will re-use the exising session)."))
+                "A CIDER session with the same connection parameters already exists (" (car session) ").  "
+                "Are you sure you want to create a new session instead of using `cider-connect-sibling-clj(s)'?  "))
         (let ((debug-on-quit nil))
           (signal 'quit nil)))))
   params)
@@ -1370,24 +1744,10 @@ canceled the action, signal quit."
 
 ;;; Aliases
 
- ;;;###autoload
-(defalias 'cider-jack-in #'cider-jack-in-clj)
- ;;;###autoload
-(define-obsolete-function-alias 'cider-jack-in-clojure 'cider-jack-in-clj "0.22")
 ;;;###autoload
-(define-obsolete-function-alias 'cider-jack-in-clojurescript 'cider-jack-in-cljs "0.22")
-
+(defalias 'cider-jack-in #'cider-jack-in-clj)
 ;;;###autoload
 (defalias 'cider-connect #'cider-connect-clj)
-;;;###autoload
-(define-obsolete-function-alias 'cider-connect-clojure 'cider-connect-clj "0.22")
-;;;###autoload
-(define-obsolete-function-alias 'cider-connect-clojurescript 'cider-connect-cljs "0.22")
-
-;;;###autoload
-(define-obsolete-function-alias 'cider-connect-sibling-clojure 'cider-connect-sibling-clj "0.22")
-;;;###autoload
-(define-obsolete-function-alias 'cider-connect-sibling-clojurescript 'cider-connect-sibling-cljs "0.22")
 
 
 ;;; Helpers
@@ -1413,11 +1773,14 @@ canceled the action, signal quit."
                                   cider-known-endpoints
                                   ssh-hosts
                                   ;; always add localhost
-                                  '(("localhost")))))
+                                  '(("localhost")
+                                    ("local-unix-domain-socket")))))
          (sel-host (cider--completing-read-host hosts))
          (host (car sel-host))
          (port (or (cadr sel-host)
-                   (cider--completing-read-port host (cider--infer-ports host ssh-hosts)))))
+                   (if (equal host "local-unix-domain-socket")
+                       (cider--completing-read-socket-file)
+                     (cider--completing-read-port host (cider--infer-ports host ssh-hosts))))))
     (cons host port)))
 
 (defun cider--ssh-hosts ()
@@ -1485,28 +1848,147 @@ of remote SSH hosts."
          (port (if (listp port) (cadr port) port)))
     (if (stringp port) (string-to-number port) port)))
 
+(defun cider--completing-read-socket-file ()
+  "Interactively select unix domain socket file name."
+  (read-file-name "Socket File: " nil nil t nil
+                  (lambda (filename)
+                    "Predicate: auto-complete only socket-files and directories"
+                    (let ((filetype (string-to-char
+                                     (file-attribute-modes
+                                      (file-attributes
+                                       filename)))))
+                      (or (eq ?s filetype)
+                          (eq ?d filetype))))))
+
+(defun cider--path->path-port-pairs (path)
+  "Given PATH, returns all the possible <path, port> pairs."
+  (thread-last path
+               cider--file-path
+               nrepl-extract-ports
+               (mapcar (lambda (port)
+                         (list path port)))
+               ;; remove nils that may have been returned due to permission errors:
+               (seq-filter #'identity)))
+
+(defun cider--invoke-running-nrepl-path (f)
+  "Invokes F safely.
+
+Necessary since we run some OS-specific commands that may fail."
+  (condition-case nil
+      (let* ((x (funcall f)))
+        (mapcar (lambda (v)
+                  (if (and (listp v)
+                           (not (file-exists-p (car v))))
+                      nil
+                    v))
+                x))
+    (error nil)))
+
 (defun cider-locate-running-nrepl-ports (&optional dir)
   "Locate ports of running nREPL servers.
 When DIR is non-nil also look for nREPL port files in DIR.  Return a list
 of list of the form (project-dir port)."
-  (let* ((paths (cider--running-nrepl-paths))
-         (proj-ports (mapcar (lambda (d)
-                               (when-let* ((port (and d (nrepl-extract-port (cider--file-path d)))))
-                                 (list (file-name-nondirectory (directory-file-name d)) port)))
-                             (cons (clojure-project-dir dir) paths))))
-    (seq-uniq (delq nil proj-ports))))
+  (let* ((pairs (cider--running-nrepl-paths))
+         (pairs (if-let (c (and dir (clojure-project-dir dir)))
+                    (append (cider--path->path-port-pairs c) pairs)
+                  pairs)))
+    (thread-last pairs
+                 (delq nil)
+                 (mapcar (lambda (x)
+                           (list (file-name-nondirectory (directory-file-name (car x)))
+                                 (nth 1 x))))
+                 (seq-uniq))))
+
+(defun cider--running-lein-nrepl-paths ()
+  "Retrieve project paths of running lein nREPL servers.
+Use `cider-ps-running-lein-nrepls-command' and
+`cider-ps-running-lein-nrepl-path-regexp-list'."
+  (unless (eq system-type 'windows-nt)
+    (let (paths)
+      (with-temp-buffer
+        (insert (shell-command-to-string cider-ps-running-lein-nrepls-command))
+        (dolist (regexp cider-ps-running-lein-nrepl-path-regexp-list)
+          (goto-char 1)
+          (while (re-search-forward regexp nil t)
+            (setq paths (cons (match-string 1) paths)))))
+      (seq-mapcat (lambda (path)
+                    (cider--path->path-port-pairs path))
+                  paths))))
+
+(defun cider--running-non-lein-nrepl-paths ()
+  "Retrieve (directory, port) pairs of running nREPL servers other than Lein ones."
+  (unless (eq system-type 'windows-nt)
+    (let* ((bb-indicator "--nrepl-server")
+           (non-lein-nrepl-pids
+            (thread-last (split-string
+                          (shell-command-to-string
+                           ;; some of the `ps u` lines we intend to catch:
+                           ;; <username> 15411 0.0  0.0 37915744  16084 s000  S+ 3:02PM 0:00.02 bb --nrepl-server
+                           ;; <username> 13835 0.1 11.2 37159036 7528432 s009 S+ 2:47PM 6:41.29 java -cp src -m nrepl.cmdline
+                           (format "ps u | grep -E 'java|%s' | grep -E 'nrepl.cmdline|%s' | grep -v -E 'leiningen|grep'"
+                                   bb-indicator
+                                   bb-indicator))
+                          "\n")
+                         (mapcar (lambda (s)
+                                   (nth 1 (split-string s " "))))
+                         (seq-filter #'identity))))
+      (when non-lein-nrepl-pids
+        (thread-last non-lein-nrepl-pids
+                     (mapcar (lambda (pid)
+                               (let* (
+                                      ;; -a: This flag is used to combine conditions with AND instead of OR
+                                      ;; -d: Lists only the file descriptors that match the given <descriptor>
+                                      ;; -n: Inhibits the conversion of network numbers to host names.
+                                      ;; -Fn: output file entry information as separate lines, with 'n' designating network info.
+                                      ;; -p: specifies the <PID>.
+                                      (directory (thread-last (split-string (shell-command-to-string (concat "lsof -a -d cwd -n -Fn -p " pid))
+                                                                            "\n")
+                                                              (seq-map (lambda (s)
+                                                                         (when (string-prefix-p "n" s)
+                                                                           (replace-regexp-in-string "^n" "" s))))
+                                                              (seq-filter #'identity)
+                                                              car))
+                                      ;; -a: This flag is used to combine conditions with AND instead of OR
+                                      ;; -n: Inhibits the conversion of network numbers to host names.
+                                      ;; -P: (important!) Ensure ports are shown as numbers, even if they have a well-known name.
+                                      ;; -Fn: output file entry information as separate lines, with 'n' designating network info.
+                                      ;; -i: this option selects the listing of all network files.
+                                      ;; -p: specifies the <PID>.
+                                      (port (thread-last (split-string (shell-command-to-string (concat "lsof -n -P -Fn -i -a -p " pid))
+                                                                       "\n")
+                                                         (seq-map (lambda (s)
+                                                                    (when (string-prefix-p "n" s)
+                                                                      (replace-regexp-in-string ".*:" "" s))))
+                                                         (seq-filter #'identity)
+                                                         (seq-filter (lambda (s)
+                                                                       (condition-case nil
+                                                                           (numberp (read s))
+                                                                         (error nil))))
+                                                         car)))
+                                 (list directory port))))
+                     (seq-filter #'cadr))))))
+
+(defun cider--running-local-nrepl-paths ()
+  "Retrieve project paths of running nREPL servers.
+Do it by looping over the open REPL buffers."
+  (thread-last (buffer-list)
+               (seq-filter
+                (lambda (b)
+                  (string-prefix-p "*cider-repl" (buffer-name b))))
+               (seq-map
+                (lambda (b)
+                  (with-current-buffer b
+                    (when-let ((dir (plist-get (cider--gather-connect-params) :project-dir))
+                               (port (plist-get (cider--gather-connect-params) :port)))
+                      (list dir (prin1-to-string port))))))
+               (seq-filter #'identity)))
 
 (defun cider--running-nrepl-paths ()
   "Retrieve project paths of running nREPL servers.
-Use `cider-ps-running-nrepls-command' and `cider-ps-running-nrepl-path-regexp-list'."
-  (let (paths)
-    (with-temp-buffer
-      (insert (shell-command-to-string cider-ps-running-nrepls-command))
-      (dolist (regexp cider-ps-running-nrepl-path-regexp-list)
-        (goto-char 1)
-        (while (re-search-forward regexp nil t)
-          (setq paths (cons (match-string 1) paths)))))
-    (seq-uniq paths)))
+Search for lein or java processes including nrepl.command nREPL."
+  (append (cider--invoke-running-nrepl-path #'cider--running-lein-nrepl-paths)
+          (cider--invoke-running-nrepl-path #'cider--running-local-nrepl-paths)
+          (cider--invoke-running-nrepl-path #'cider--running-non-lein-nrepl-paths)))
 
 (defun cider--identify-buildtools-present (&optional project-dir)
   "Identify build systems present by their build files in PROJECT-DIR.
@@ -1515,9 +1997,11 @@ PROJECT-DIR defaults to current project."
          (build-files '((lein        . "project.clj")
                         (boot        . "build.boot")
                         (clojure-cli . "deps.edn")
+                        (babashka    . "bb.edn")
                         (shadow-cljs . "shadow-cljs.edn")
                         (gradle      . "build.gradle")
-                        (gradle      . "build.gradle.kts"))))
+                        (gradle      . "build.gradle.kts")
+                        (nbb         . "nbb.edn"))))
     (delq nil
           (mapcar (lambda (candidate)
                     (when (file-exists-p (cdr candidate))
@@ -1553,6 +2037,55 @@ PROJECT-DIR defaults to the current project."
           ;; 0.18, therefore the need for `cider-maybe-intern'
           (t (cider-maybe-intern cider-jack-in-default)))))
 
+;;;###autoload
+(defun cider-jack-in-universal (arg)
+  "Start and connect to an nREPL server for the current project or ARG project id.
+
+If a project is found in current dir, call `cider-jack-in' passing ARG as
+first parameter, of which see.  Otherwise, ask user which project type to
+start an nREPL server and connect to without a project.
+
+But if invoked with a numeric prefix ARG, then start an nREPL server for
+the project type denoted by ARG number and connect to it, even if there is
+no project for it in the current dir.
+
+The supported project tools and their assigned numeric prefix ids are
+sourced from `cider-jack-in-universal-options', of which see.
+
+You can pass a numeric prefix argument n with `M-n` or `C-u n`.
+
+For example, to jack in to leiningen which is assigned to prefix arg 2 type
+
+M-2 \\[cider-jack-in-universal]."
+  (interactive "P")
+  (let ((cpt (clojure-project-dir (cider-current-dir))))
+    (if (or (integerp arg) (null cpt))
+        (let* ((project-types-available (mapcar #'car cider-jack-in-universal-options))
+               (project-type (if (null arg)
+                                 (intern (completing-read
+                                          "No project found in current dir, select project type to jack in: "
+                                          project-types-available
+                                          nil t))
+
+                               (or (seq-some (lambda (elt)
+                                               (cl-destructuring-bind
+                                                   (project-type (&key prefix-arg &allow-other-keys)) elt
+                                                 (when (= arg prefix-arg)
+                                                   project-type)))
+                                             cider-jack-in-universal-options)
+                                   (error ":cider-jack-in-universal :unsupported-prefix-argument %S :no-such-project"
+                                          arg))))
+               (project-options (cadr (seq-find (lambda (elt) (equal project-type (car elt)))
+                                                cider-jack-in-universal-options)))
+               (jack-in-opts (plist-get project-options :cmd))
+               (jack-in-type (plist-get jack-in-opts :jack-in-type)))
+          (pcase jack-in-type
+            ('clj (cider-jack-in-clj jack-in-opts))
+            ('cljs (cider-jack-in-cljs jack-in-opts))
+            (_ (error ":cider-jack-in-universal :jack-in-type-unsupported %S" jack-in-type))))
+
+      (cider-jack-in-clj arg))))
+
 
 ;; TODO: Implement a check for command presence over tramp
 (defun cider--resolve-command (command)
@@ -1563,6 +2096,29 @@ assume the command is available."
                            (executable-find command)
                            (executable-find (concat command ".bat")))))
     (shell-quote-argument command)))
+
+(defun cider--resolve-project-command (command)
+  "Find COMMAND in project dir or exec path (see variable `exec-path').
+If COMMAND starts with ./ or ../ resolve relative to `clojure-project-dir',
+otherwise resolve via `cider--resolve-command'."
+  (if (string-match-p "\\`\\.\\{1,2\\}/" command)
+      (locate-file command (list (clojure-project-dir)) '("" ".bat") 'executable)
+    (cider--resolve-command command)))
+
+(defcustom cider-connection-message-fn #'cider-random-words-of-inspiration
+  "The function to use to generate the message displayed on connect.
+When set to nil no additional message will be displayed.  A good
+alternative to the default is `cider-random-tip'."
+  :type 'function
+  :group 'cider
+  :package-version '(cider . "0.11.0"))
+
+(defun cider--maybe-inspire-on-connect ()
+  "Display an inspiration connection message."
+  (when cider-connection-message-fn
+    (message "Connected! %s" (funcall cider-connection-message-fn))))
+
+(add-hook 'cider-connected-hook #'cider--maybe-inspire-on-connect)
 
 ;;;###autoload
 (with-eval-after-load 'clojure-mode

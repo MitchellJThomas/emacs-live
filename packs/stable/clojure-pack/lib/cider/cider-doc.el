@@ -1,6 +1,6 @@
 ;;; cider-doc.el --- CIDER documentation functionality -*- lexical-binding: t -*-
 
-;; Copyright © 2014-2020 Bozhidar Batsov, Jeff Valk and CIDER contributors
+;; Copyright © 2014-2023 Bozhidar Batsov, Jeff Valk and CIDER contributors
 
 ;; Author: Jeff Valk <jv@jeffvalk.com>
 
@@ -26,8 +26,8 @@
 ;;; Code:
 
 (require 'cider-common)
+(require 'cider-docstring)
 (require 'subr-x)
-(require 'cider-compat)
 (require 'cider-util)
 (require 'cider-popup)
 (require 'cider-client)
@@ -120,25 +120,25 @@
 
 (defface cider-docview-emphasis-face
   '((t (:inherit default :underline t)))
-  "Face for emphasized text"
+  "Face for emphasized text."
   :group 'cider-docview-mode
   :package-version '(cider . "0.7.0"))
 
 (defface cider-docview-strong-face
   '((t (:inherit default :underline t :weight bold)))
-  "Face for strongly emphasized text"
+  "Face for strongly emphasized text."
   :group 'cider-docview-mode
   :package-version '(cider . "0.7.0"))
 
 (defface cider-docview-literal-face
   '((t (:inherit font-lock-string-face)))
-  "Face for literal text"
+  "Face for literal text."
   :group 'cider-docview-mode
   :package-version '(cider . "0.7.0"))
 
 (defface cider-docview-table-border-face
   '((t (:inherit shadow)))
-  "Face for table borders"
+  "Face for table borders."
   :group 'cider-docview-mode
   :package-version '(cider . "0.7.0"))
 
@@ -149,15 +149,11 @@
   (cider-scale-background-color)
   "Background color for code blocks.")
 
-(defadvice enable-theme (after cider-docview-adapt-to-theme activate)
+(advice-add 'enable-theme  :after #'cider--docview-adapt-to-theme)
+(advice-add 'disable-theme :after #'cider--docview-adapt-to-theme)
+(defun cider--docview-adapt-to-theme (&rest _)
   "When theme is changed, update `cider-docview-code-background-color'."
   (setq cider-docview-code-background-color (cider-scale-background-color)))
-
-
-(defadvice disable-theme (after cider-docview-adapt-to-theme activate)
-  "When theme is disabled, update `cider-docview-code-background-color'."
-  (setq cider-docview-code-background-color (cider-scale-background-color)))
-
 
 ;; Mode & key bindings
 
@@ -188,7 +184,7 @@
 (defvar cider-docview-line)
 
 (define-derived-mode cider-docview-mode help-mode "Doc"
-  "Major mode for displaying CIDER documentation
+  "Major mode for displaying CIDER documentation.
 
 \\{cider-docview-mode-map}"
   (setq buffer-read-only t)
@@ -270,10 +266,17 @@ opposite of what that option dictates."
 
 (defconst cider-doc-buffer "*cider-doc*")
 
-(defun cider-create-doc-buffer (symbol)
-  "Populates *cider-doc* with the documentation for SYMBOL."
+(defun cider-create-doc-buffer (symbol &optional compact)
+  "Populates *cider-doc* with the documentation for SYMBOL,
+favoring a COMPACT format if specified."
   (when-let* ((info (cider-var-info symbol)))
-    (cider-docview-render (cider-make-popup-buffer cider-doc-buffer nil 'ancillary) symbol info)))
+    (cider-docview-render (cider-make-popup-buffer cider-doc-buffer nil 'ancillary) symbol info compact)))
+
+(defun cider-create-compact-doc-buffer (symbol)
+  "Populates *cider-doc* with the documentation for SYMBOL.
+
+Favors a compact rendering of docstrings"
+  (cider-create-doc-buffer symbol :compact))
 
 (defun cider-doc-lookup (symbol)
   "Look up documentation for SYMBOL."
@@ -389,18 +392,24 @@ Tables are marked to be ignored by line wrap."
         (cider-docview-wrap-text buffer))))) ; ignores code, table blocks
 
 (defun cider--abbreviate-file-protocol (file-with-protocol)
-  "Abbreviate the file-path in `file:/path/to/file' of FILE-WITH-PROTOCOL."
-  (if (string-match "\\`file:\\(.*\\)" file-with-protocol)
-      (let ((file (match-string 1 file-with-protocol))
-            (proj-dir (clojure-project-dir)))
-        (if (and proj-dir
-                 (file-in-directory-p file proj-dir))
-            (file-relative-name file proj-dir)
-          file))
-    file-with-protocol))
+  "Abbreviate the file-path in `file:/path/to/file' of FILE-WITH-PROTOCOL.
 
-(defun cider-docview-render-info (buffer info)
-  "Emit into BUFFER formatted INFO for the Clojure or Java symbol."
+Same for `jar:file:...!/' segments."
+  (let ((result (if (string-match "^\\(jar\\|zip\\):\\(file:.+\\)!/\\(.+\\)" file-with-protocol)
+                    (match-string 3 file-with-protocol)
+                  file-with-protocol)))
+    (if (string-match "\\`file:\\(.*\\)" result)
+        (let ((file (match-string 1 result))
+              (proj-dir (clojure-project-dir)))
+          (if (and proj-dir
+                   (file-in-directory-p file proj-dir))
+              (file-relative-name file proj-dir)
+            file))
+      result)))
+
+(defun cider-docview-render-info (buffer info &optional compact for-tooltip)
+  "Emit into BUFFER formatted INFO for the Clojure or Java symbol,
+in a COMPACT format is specified, FOR-TOOLTIP if specified."
   (let* ((ns      (nrepl-dict-get info "ns"))
          (name    (nrepl-dict-get info "name"))
          (added   (nrepl-dict-get info "added"))
@@ -410,10 +419,20 @@ Tables are marked to be ignored by line wrap."
          (builtin (nrepl-dict-get info "built-in")) ;; babashka specific
          (forms   (when-let* ((str (nrepl-dict-get info "forms-str")))
                     (split-string str "\n")))
-         (args    (when-let* ((str (nrepl-dict-get info "arglists-str")))
-                    (split-string str "\n")))
-         (doc     (or (nrepl-dict-get info "doc")
-                      "Not documented."))
+         (args    (or (nrepl-dict-get info "annotated-arglists")
+                      (when-let* ((str (nrepl-dict-get info "arglists-str")))
+                        (split-string str "\n"))))
+         (rendered-fragments (cider--render-docstring (list "doc-fragments" (unless compact
+                                                                              (nrepl-dict-get info "doc-fragments"))
+                                                            "doc-block-tags-fragments" (nrepl-dict-get info "doc-block-tags-fragments")
+                                                            "doc-first-sentence-fragments" (nrepl-dict-get info "doc-first-sentence-fragments"))))
+         (fetched-doc (nrepl-dict-get info "doc"))
+         (doc     (or rendered-fragments
+                      (if compact
+                          (cider-docstring--dumb-trim fetched-doc)
+                        fetched-doc)
+                      (unless compact
+                        "Not documented.")))
          (url     (nrepl-dict-get info "url"))
          (class   (nrepl-dict-get info "class"))
          (member  (nrepl-dict-get info "member"))
@@ -426,24 +445,35 @@ Tables are marked to be ignored by line wrap."
          (see-also (nrepl-dict-get info "see-also")))
     (cider--help-setup-xref (list #'cider-doc-lookup (format "%s/%s" ns name)) nil buffer)
     (with-current-buffer buffer
-      (cl-flet ((emit (text &optional face)
+      (cl-flet ((emit (text &optional face sep)
                       (insert (if face
                                   (propertize text 'font-lock-face face)
                                 text)
-                              "\n")))
+                              (or sep "\n"))))
         (emit (if class java-name clj-name) 'font-lock-function-name-face)
         (when super
-          (emit (concat "   Extends: " (cider-font-lock-as 'java-mode super))))
+          (emit (concat "Extends: " (cider-font-lock-as 'java-mode super))))
         (when ifaces
           (emit (concat "Implements: " (cider-font-lock-as 'java-mode (car ifaces))))
-          (dolist (iface (cdr ifaces))
-            (emit (concat "            "(cider-font-lock-as 'java-mode iface)))))
+          ;; choose a separator that will produce correct alignment on monospace and regular fonts:
+          (let ((sep (if for-tooltip
+                         "                     "
+                       "            ")))
+            (dolist (iface (cdr ifaces))
+              (emit (concat sep (cider-font-lock-as 'java-mode iface))))))
         (when (or super ifaces)
           (insert "\n"))
-        (when-let* ((forms (or forms args)))
+        (when-let* ((forms (or forms args))
+                    (forms (delq nil (mapcar (lambda (f)
+                                               (unless (equal f "nil")
+                                                 f))
+                                             forms))))
           (dolist (form forms)
-            (insert " ")
-            (emit (cider-font-lock-as-clojure form))))
+            (emit (cider-font-lock-as-clojure form)
+                  nil))
+          (when compact
+            ;; Compensate for the newlines not `emit`ted in the previous call:
+            (insert "\n")))
         (when special
           (emit "Special Form" 'font-lock-keyword-face))
         (when macro
@@ -454,9 +484,12 @@ Tables are marked to be ignored by line wrap."
           (emit (concat "Added in " added) 'font-lock-comment-face))
         (when depr
           (emit (concat "Deprecated in " depr) 'font-lock-keyword-face))
-        (if class
+        (if (and doc class (not rendered-fragments))
             (cider-docview-render-java-doc (current-buffer) doc)
-          (emit (concat "  " doc)))
+          (when doc
+            (emit (if rendered-fragments
+                      doc
+                    (concat "  " doc)))))
         (when url
           (insert "\n  Please see ")
           (insert-text-button url
@@ -465,7 +498,7 @@ Tables are marked to be ignored by line wrap."
                               'action (lambda (x)
                                         (browse-url (button-get x 'url))))
           (insert "\n"))
-        (when javadoc
+        (when (and (not compact) javadoc)
           (insert "\n\nFor additional documentation, see the ")
           (insert-text-button "Javadoc"
                               'url javadoc
@@ -483,18 +516,20 @@ Tables are marked to be ignored by line wrap."
                               'action (lambda (_)
                                         (cider-browse-spec (format "%s/%s" ns name))))
           (insert "\n\n"))
-        (if (and cider-docview-file (not (string= cider-docview-file "")))
-            (progn
-              (insert (propertize (if class java-name clj-name)
-                                  'font-lock-face 'font-lock-function-name-face)
-                      " is defined in ")
-              (insert-text-button (cider--abbreviate-file-protocol cider-docview-file)
-                                  'follow-link t
-                                  'action (lambda (_x)
-                                            (cider-docview-source)))
-              (insert "."))
-          (insert "Definition location unavailable."))
-        (when see-also
+        (unless compact
+          (if (and cider-docview-file (not (string= cider-docview-file "")))
+              (progn
+                (insert (propertize (if class java-name clj-name)
+                                    'font-lock-face 'font-lock-function-name-face)
+                        " is defined in ")
+                (insert-text-button (cider--abbreviate-file-protocol cider-docview-file)
+                                    'follow-link t
+                                    'action (lambda (_x)
+                                              (cider-docview-source)))
+                (insert "."))
+            (insert "Definition location unavailable.")))
+        (when (and (not compact)
+                   see-also)
           (insert "\n\n Also see: ")
           (mapc (lambda (ns-sym)
                   (let* ((ns-sym-split (split-string ns-sym "/"))
@@ -508,7 +543,8 @@ Tables are marked to be ignored by line wrap."
                                         'help-function (apply-partially #'cider-doc-lookup symbol)))
                   (insert " "))
                 see-also))
-        (cider--doc-make-xrefs)
+        (unless compact
+          (cider--doc-make-xrefs))
         (let ((beg (point-min))
               (end (point-max)))
           (nrepl-dict-map (lambda (k v)
@@ -517,8 +553,9 @@ Tables are marked to be ignored by line wrap."
       (current-buffer))))
 
 (declare-function cider-set-buffer-ns "cider-mode")
-(defun cider-docview-render (buffer symbol info)
-  "Emit into BUFFER formatted documentation for SYMBOL's INFO."
+(defun cider-docview-render (buffer symbol info &optional compact for-tooltip)
+  "Emit into BUFFER formatted documentation for SYMBOL's INFO,
+favoring a COMPACT format if specified, FOR-TOOLTIP if specified."
   (with-current-buffer buffer
     (let ((javadoc (nrepl-dict-get info "javadoc"))
           (file (nrepl-dict-get info "file"))
@@ -534,7 +571,7 @@ Tables are marked to be ignored by line wrap."
       (setq-local cider-docview-line line)
 
       (remove-overlays)
-      (cider-docview-render-info buffer info)
+      (cider-docview-render-info buffer info compact for-tooltip)
 
       (goto-char (point-min))
       (current-buffer))))

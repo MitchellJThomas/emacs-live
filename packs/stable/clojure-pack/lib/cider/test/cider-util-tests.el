@@ -1,9 +1,9 @@
-;;; cider-util-tests.el
+;;; cider-util-tests.el  -*- lexical-binding: t; -*-
 
-;; Copyright © 2012-2020 Tim King, Bozhidar Batsov
+;; Copyright © 2012-2023 Tim King, Bozhidar Batsov
 
 ;; Author: Tim King <kingtim@gmail.com>
-;;         Bozhidar Batsov <bozhidar@batsov.com>
+;;         Bozhidar Batsov <bozhidar@batsov.dev>
 ;;         Artur Malabarba <bruce.connor.am@gmail.com>
 
 ;; This file is NOT part of GNU Emacs.
@@ -29,6 +29,13 @@
 
 (require 'buttercup)
 (require 'cider-util)
+(require 'package)
+
+;; Please, for each `describe', ensure there's an `it' block, so that its execution is visible in CI.
+
+(defun with-clojure-buffer--go-to-point ()
+  (when (search-forward "|" nil 'noerror)
+    (delete-char -1)))
 
 (defmacro with-clojure-buffer (contents &rest body)
   "Execute BODY in a clojure-mode buffer with CONTENTS
@@ -41,8 +48,7 @@ buffer."
      (delay-mode-hooks (clojure-mode))
      (insert ,contents)
      (goto-char (point-min))
-     (when (search-forward "|" nil 'noerror)
-       (delete-backward-char 1))
+     (with-clojure-buffer--go-to-point)
      ,@body))
 
 ;;; cider-util tests
@@ -50,23 +56,16 @@ buffer."
 (describe "cider--version"
   :var (cider-version cider-codename)
 
-  (it "handles version unavailable error"
-    (spy-on 'pkg-info-version-info :and-throw-error '(error "No version"))
-    (setq cider-version "0.11.0"
-          cider-codename "Victory")
-    (expect (cider--version) :to-equal "0.11.0 (Victory)"))
-
   (it "returns correct version number when available"
-    (spy-on 'pkg-info-version-info :and-return-value "0.11.0")
     (setq cider-version "0.11.0"
           cider-codename "Victory")
     (expect (cider--version) :to-equal "0.11.0 (Victory)"))
 
   (it "handles snapshot versions"
-    (spy-on 'pkg-info-version-info :and-return-value "0.11.0snapshot (package: 20160301.2217)")
     (setq cider-version "0.11.0-snapshot"
           cider-codename "Victory")
-    (expect (cider--version) :to-equal "0.11.0snapshot (package: 20160301.2217)")))
+    (spy-on 'cider--pkg-version :and-return-value "20160301.2217")
+    (expect (cider--version) :to-equal "0.11.0-snapshot (package: 20160301.2217)")))
 
 (defvar some-cider-hook)
 
@@ -80,7 +79,7 @@ buffer."
 
   (it "exits on first nil"
     (let (here)
-      (setq some-cider-hook (list #'upcase (lambda (x) nil) (lambda (x) (setq here t))))
+      (setq some-cider-hook (list #'upcase (lambda (_x) nil) (lambda (_x) (setq here t))))
       (cider-run-chained-hook 'some-cider-hook "A")
       (expect here :to-be nil))))
 
@@ -129,13 +128,11 @@ buffer."
       (with-clojure-buffer ":abc/foo"
         (expect (cider-symbol-at-point) :to-equal ":abc/foo")))
 
-    (it "attempts to resolve namespaced keywords"
-      (spy-on 'cider-sync-request:macroexpand :and-return-value ":foo.bar/abc")
+    (it "does not attempt to resolve auto-resolved keywords"
       (with-clojure-buffer "(ns foo.bar) ::abc"
-        (expect (cider-symbol-at-point) :to-equal ":foo.bar/abc"))
-      (spy-on 'cider-sync-request:macroexpand :and-return-value ":clojure.string/abc")
+        (expect (cider-symbol-at-point) :to-equal "::abc"))
       (with-clojure-buffer "(ns foo.bar (:require [clojure.string :as str])) ::str/abc"
-        (expect (cider-symbol-at-point) :to-equal ":clojure.string/abc"))))
+        (expect (cider-symbol-at-point) :to-equal "::str/abc"))))
 
   (describe "when there's nothing at point"
     (it "returns nil"
@@ -165,13 +162,11 @@ buffer."
       (with-clojure-buffer "(1 2 3|)"
         (expect (cider-list-at-point) :to-equal "(1 2 3)")))
 
-    ;; doesn't work on Emacs 25
-    (xit "handles leading @ reader macro properly"
+    (it "handles leading @ reader macro properly"
       (with-clojure-buffer "@(1 2 3|)"
         (expect (cider-list-at-point) :to-equal "@(1 2 3)")))
 
-    ;; doesn't work on Emacs 25
-    (xit "handles leading ' reader macro properly"
+    (it "handles leading ' reader macro properly"
       (with-clojure-buffer "'(1 2 3|)"
         (expect (cider-list-at-point) :to-equal "'(1 2 3)")))
 
@@ -213,6 +208,23 @@ buffer."
         (insert "'")
         (expect (cider-sexp-at-point 'bounds) :to-equal '(5 15))))))
 
+(describe "cider-last-sexp"
+  (describe "when the param 'bounds is not given"
+    (it "returns the last sexp"
+      (with-clojure-buffer "a\n\n(defn ...)|\n\nb"
+        (expect (cider-last-sexp) :to-equal "(defn ...)")))
+    (it "returns the last sexp event when there are whitespaces"
+      (with-clojure-buffer "a\n\n(defn ...) ,\n|\nb"
+        (expect (cider-last-sexp) :to-equal "(defn ...)"))))
+
+  (describe "when the param 'bounds is given"
+    (it "returns the bounds of last sexp"
+      (with-clojure-buffer "a\n\n(defn ...)|\n\nb"
+        (expect (cider-last-sexp 'bounds) :to-equal '(4 14))))
+    (it "returns the bounds of last sexp event when there are whitespaces"
+      (with-clojure-buffer "a\n\n(defn ...) ,\n|\nb"
+        (expect (cider-last-sexp 'bounds) :to-equal '(4 14))))))
+
 (describe "cider-defun-at-point"
   (describe "when the param 'bounds is not given"
     (it "returns the defun at point"
@@ -224,7 +236,17 @@ buffer."
   (describe "when the param 'bounds is given"
     (it "returns the bounds of starting and ending positions of the defun"
       (with-clojure-buffer "a\n\n(defn ...)|\n\nb"
-        (expect (cider-defun-at-point 'bounds) :to-equal '(4 15))))))
+        (expect (cider-defun-at-point 'bounds) :to-equal '(4 15)))))
+
+  (describe "within a repl"
+    (it "also works"
+      (with-temp-buffer
+        (insert "user> (.| \"\")")
+        (goto-char (point-min))
+        (with-clojure-buffer--go-to-point)
+        (delay-mode-hooks ;; we just want to mark the mode as cider-nrepl, without running other code.
+          (cider-repl-mode))
+        (expect (cider-defun-at-point) :to-equal "(. \"\")")))))
 
 (describe "cider-repl-prompt-function"
   (it "returns repl prompts"

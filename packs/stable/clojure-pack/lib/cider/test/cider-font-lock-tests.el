@@ -1,4 +1,4 @@
-;;; cider-font-lock-tests.el
+;;; cider-font-lock-tests.el  -*- lexical-binding: t; -*-
 
 ;; Author: Alvin Francis Dumalus <alvin.francis.dumalus@gmail.com>
 
@@ -26,6 +26,7 @@
 (require 'buttercup)
 (require 'cider-mode)
 
+;; Please, for each `describe', ensure there's an `it' block, so that its execution is visible in CI.
 
 ;; Utilities
 
@@ -37,7 +38,7 @@
      (insert ,content)
      (clojure-mode)
      (cider-mode)
-     (font-lock-fontify-buffer)
+     (font-lock-ensure)
      ,@body))
 
 (defun cider--face-covers-range-p (start end face)
@@ -46,7 +47,7 @@
     (seq-every-p (lambda (target-face)
                    (or (eq face target-face)
                        (when (consp target-face)
-                         (seq-contains target-face face))))
+                         (member face target-face))))
                  all-faces)))
 
 (defun cider--face-exists-in-range-p (start end face)
@@ -56,7 +57,7 @@
     (seq-some (lambda (target-face)
                 (or (eq face target-face)
                     (when (consp target-face)
-                      (seq-contains target-face face))))
+                      (member face target-face))))
               all-faces)))
 
 ;; Tests

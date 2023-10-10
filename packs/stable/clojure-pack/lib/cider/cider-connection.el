@@ -1,9 +1,9 @@
 ;;; cider-connection.el --- Connection and session life-cycle management for CIDER -*- lexical-binding: t -*-
 ;;
-;; Copyright © 2019-2020 Artur Malabarba, Bozhidar Batsov, Vitalie Spinu and CIDER contributors
+;; Copyright © 2019-2023 Artur Malabarba, Bozhidar Batsov, Vitalie Spinu and CIDER contributors
 ;;
 ;; Author: Artur Malabarba <bruce.connor.am@gmail.com>
-;;         Bozhidar Batsov <bozhidar@batsov.com>
+;;         Bozhidar Batsov <bozhidar@batsov.dev>
 ;;         Vitalie Spinu <spinuvit@gmail.com>
 ;;
 ;; Keywords: languages, clojure, cider
@@ -45,14 +45,6 @@ See `cider-format-connection-params' for available format characters."
   :group 'cider
   :package-version '(cider . "0.18.0"))
 
-(defcustom cider-connection-message-fn #'cider-random-words-of-inspiration
-  "The function to use to generate the message displayed on connect.
-When set to nil no additional message will be displayed.  A good
-alternative to the default is `cider-random-tip'."
-  :type 'function
-  :group 'cider
-  :package-version '(cider . "0.11.0"))
-
 (defcustom cider-redirect-server-output-to-repl  t
   "Controls whether nREPL server output would be redirected to the REPL.
 When non-nil the output would end up in both the nrepl-server buffer (when
@@ -63,16 +55,64 @@ available) and the matching REPL buffer."
   :package-version '(cider . "0.17.0"))
 
 (defcustom cider-auto-mode t
-  "When non-nil, automatically enable cider mode for all Clojure buffers."
+  "When non-nil, automatically enable and disable CIDER in all Clojure buffers.
+
+After an initial connection, `cider-mode' is added to `clojure-mode-hook' and
+automatically enabled on all existing Clojure buffers.  After the last
+connection has been closed, `cider-mode' is disabled in all Clojure buffers, and
+has to be manually re-enabled via \\[cider-mode].
+
+Useful for switching between alternative minor modes like `inf-clojure-mode'."
   :type 'boolean
   :group 'cider
   :safe #'booleanp
   :package-version '(cider . "0.9.0"))
 
+(defcustom cider-merge-sessions nil
+  "Controls session combination behaviour.
+
+Symbol `host' combines all sessions of a project associated with the same host.
+Symbol `project' combines all sessions of a project.
+
+All other values do not combine any sessions."
+  :type '(choice (const :tag "Combine all sessions with the same host" host)
+                 (const :tag "Combine all sessions from the same project" project)
+                 (other :tag "Do not combine any sessions"))
+  :group 'cider
+  :safe #'symbolp
+  :package-version '(cider . "1.5"))
+
+(defcustom cider-reuse-dead-repls 'prompt
+  "How to deal with existing dead REPL buffers when initializing a connection.
+
+Possible choices are `prompt', `auto', `any', and nil.
+- `prompt' means to always ask the user for a decision.
+- `auto' means to automatically reuse a dead REPL without prompting the user
+  if it is the only available option.  When there are multiple buffers to
+  choose from, the user is is prompted for a choice.
+- `any' (or any other non-nil value) means to reuse any dead REPL buffer
+  available, by default the most relevant according to various heuristics,
+  and never prompt the user.
+- nil means to start a new REPL each time, ignoring existing buffers."
+  :type '(choice (const :tag "Always prompt for what to do with dead REPLs" prompt)
+                 (const :tag "Reuse dead REPL, prompting only for multiple choice" auto)
+                 (const :tag "Reuse any available dead REPL and never prompt" any)
+                 (const :tag "Never reuse dead REPLs" nil))
+  :group 'cider
+  :safe #'symbolp
+  :package-version '(cider . "1.8"))
+
 (defconst cider-required-nrepl-version "0.6.0"
   "The minimum nREPL version that's known to work properly with CIDER.")
 
-
+(defcustom cider-clojurec-eval-destination 'multi
+  "The REPL type to be chosen in .cljc buffers."
+  :type '(choice (const :tag "Clojure" clj)
+                 (const :tag "ClojureScript" cljs)
+                 (const :tag "Multi (evaluate in Clojure and ClojureScript simultaneously)" multi))
+  :group 'cider
+  :package-version '(cider . "1.8"))
+
 ;;; Connect
 
 (defun cider-nrepl-connect (params)
@@ -85,7 +125,8 @@ PARAMS is a plist containing :host, :port, :server and other parameters for
     (plist-get params :port)
     (plist-get params :server)
     (lambda (_)
-      (cider-repl-create params)))))
+      (cider-repl-create params))
+    (plist-get params :socket-file))))
 
 (defun cider-sessions ()
   "Return a list of all active CIDER sessions."
@@ -127,18 +168,18 @@ PROC-BUFFER is either server or client buffer, defaults to current buffer."
         (cl-loop for l on nrepl-endpoint by #'cddr
                  do (setq params (plist-put params (car l) (cadr l))))
         (setq params (thread-first params
-                       (plist-put :project-dir nrepl-project-dir)))
+                                   (plist-put :project-dir nrepl-project-dir)))
         (when (buffer-live-p server-buf)
           (setq params (thread-first params
-                         (plist-put :server (get-buffer-process server-buf))
-                         (plist-put :server-command nrepl-server-command))))
+                                     (plist-put :server (get-buffer-process server-buf))
+                                     (plist-put :server-command nrepl-server-command))))
         ;; repl-specific parameters (do not pollute server params!)
         (unless (nrepl-server-p proc-buffer)
           (setq params (thread-first params
-                         (plist-put :session-name cider-session-name)
-                         (plist-put :repl-type cider-repl-type)
-                         (plist-put :cljs-repl-type cider-cljs-repl-type)
-                         (plist-put :repl-init-function cider-repl-init-function))))
+                                     (plist-put :session-name cider-session-name)
+                                     (plist-put :repl-type cider-repl-type)
+                                     (plist-put :cljs-repl-type cider-cljs-repl-type)
+                                     (plist-put :repl-init-function cider-repl-init-function))))
         params))))
 
 (defun cider--close-buffer (buffer)
@@ -162,14 +203,16 @@ buffer."
       (when no-kill
         ;; inform sentinel not to kill the server, if any
         (thread-first (get-buffer-process repl)
-          (process-plist)
-          (plist-put :keep-server t))))
+                      (process-plist)
+                      (plist-put :keep-server t))))
     (let ((proc (get-buffer-process repl)))
       (when (and (process-live-p proc)
                  (or (not nrepl-server-buffer)
                      ;; Sync request will hang if the server is dead.
                      (process-live-p (get-buffer-process nrepl-server-buffer))))
         (nrepl-sync-request:close repl)
+        ;; give a chance to the REPL to respond to the closing of the connection
+        (sleep-for 0.5)
         (delete-process proc)))
     (when-let* ((messages-buffer (and nrepl-log-messages
                                       (nrepl-messages-buffer repl))))
@@ -201,7 +244,10 @@ FORMAT is a format string to compile with ARGS and display on the REPL."
 (defvar cider-minimum-clojure-version)
 (defun cider--check-clojure-version-supported ()
   "Ensure that we are meeting the minimum supported version of Clojure."
-  (if-let* ((clojure-version (cider--clojure-version)))
+  (if-let* ((clojure-version (cider--clojure-version))
+            ;; drop all qualifiers from the version string
+            ;; e.g. 1.10.0-master-SNAPSHOT becomes simply 1.10.0
+            (clojure-version (car (split-string clojure-version "-"))))
       (when (version< clojure-version cider-minimum-clojure-version)
         (cider-emit-manual-warning "basics/installation.html#prerequisites"
                                    "Clojure version (%s) is not supported (minimum %s). CIDER will not work."
@@ -253,6 +299,7 @@ message in the REPL area."
   (cider-nrepl-send-request '("op" "out-subscribe")
                             (cider-interactive-eval-handler (current-buffer))))
 
+(defvar cider-mode)
 (declare-function cider-mode "cider-mode")
 (defun cider-enable-on-existing-clojure-buffers ()
   "Enable CIDER's minor mode on existing Clojure buffers.
@@ -261,11 +308,23 @@ See command `cider-mode'."
   (add-hook 'clojure-mode-hook #'cider-mode)
   (dolist (buffer (cider-util--clojure-buffers))
     (with-current-buffer buffer
-      (cider-mode +1))))
+      (unless cider-mode
+        (cider-mode +1)
+        ;; In global-eldoc-mode, a new file-visiting buffer calls
+        ;; `turn-on-eldoc-mode' which enables eldoc-mode if it's supported in that
+        ;; buffer as determined by `eldoc--supported-p'.  Cider's eldoc support
+        ;; allows new buffers in cider-mode to enable eldoc-mode.  As of 2021-04,
+        ;; however, clojure-mode itself has no eldoc support, so old clojure
+        ;; buffers opened before cider started aren't necessarily in eldoc-mode.
+        ;; Here, we've enabled cider-mode for this old clojure buffer, and now, if
+        ;; global-eldoc-mode is enabled, try to enable eldoc-mode as if the buffer
+        ;; had just been created with cider-mode.
+        (when global-eldoc-mode
+          (turn-on-eldoc-mode))))))
 
 (declare-function cider--debug-mode "cider-debug")
 (defun cider-disable-on-existing-clojure-buffers ()
-  "Disable command `cider-mode' and related commands on existing Clojure buffers."
+  "Disable `cider-mode' and related commands on existing Clojure buffers."
   (interactive)
   (dolist (buffer (cider-util--clojure-buffers))
     (with-current-buffer buffer
@@ -273,13 +332,30 @@ See command `cider-mode'."
       (cider-mode -1))))
 
 (defun cider-possibly-disable-on-existing-clojure-buffers ()
-  "Disable command `cider-mode' on existing Clojure buffers when all CIDER sessions are closed."
+  "Disable `cider-mode' in all Clojure buffers if all CIDER sessions are closed."
   (unless (cider-sessions)
     (cider-disable-on-existing-clojure-buffers)))
+
+(defun cider--set-connection-capabilities (&optional conn-buffer)
+  "Set `cider-connection-capabilities' for CONN-BUFFER during repl init.
+See `cider-connection-capabilities'."
+  (with-current-buffer (or conn-buffer (current-buffer))
+    (setf cider-connection-capabilities
+          (append
+           (pcase (cider-runtime)
+             ('clojure '(clojure jvm-compilation-errors))
+             ('babashka '(babashka jvm-compilation-errors))
+             ('nbb '(cljs))
+             (_ '()))
+           (when
+               (eq cider-repl-type 'cljs)
+             '(cljs))))))
 
 (declare-function cider--debug-init-connection "cider-debug")
 (declare-function cider-repl-init "cider-repl")
 (declare-function cider-nrepl-op-supported-p "cider-client")
+(declare-function cider-nrepl-request:eval "cider-client")
+
 (defun cider--connected-handler ()
   "Handle CIDER initialization after nREPL connection has been established.
 This function is appended to `nrepl-connected-hook' in the client process
@@ -313,11 +389,17 @@ buffer."
          ;; first.
          (cider--debug-init-connection))
 
+       (cider--set-connection-capabilities)
+
        (when cider-repl-init-function
          (funcall cider-repl-init-function))
 
        (when cider-auto-mode
          (cider-enable-on-existing-clojure-buffers))
+
+       ;; Perform an async request, so that the nrepl-middleware is required as soon as possible,
+       ;; making the user's first interaction quicker.
+       (cider-nrepl-request:eval "\"warm-up\"" #'ignore)
 
        (run-hooks 'cider-connected-hook)))))
 
@@ -326,7 +408,8 @@ buffer."
 This function is appended to `nrepl-disconnected-hook' in the client
 process buffer."
   ;; `nrepl-connected-hook' is run in the connection buffer
-  (cider-possibly-disable-on-existing-clojure-buffers)
+  (when cider-auto-mode
+    (cider-possibly-disable-on-existing-clojure-buffers))
   (run-hooks 'cider-disconnected-hook))
 
 
@@ -337,24 +420,24 @@ process buffer."
   (with-current-buffer (cider-current-repl)
     (when nrepl-versions
       (thread-first nrepl-versions
-        (nrepl-dict-get "java")
-        (nrepl-dict-get "version-string")))))
+                    (nrepl-dict-get "java")
+                    (nrepl-dict-get "version-string")))))
 
 (defun cider--clojure-version ()
   "Retrieve the underlying connection's Clojure version."
   (with-current-buffer (cider-current-repl)
     (when nrepl-versions
       (thread-first nrepl-versions
-        (nrepl-dict-get "clojure")
-        (nrepl-dict-get "version-string")))))
+                    (nrepl-dict-get "clojure")
+                    (nrepl-dict-get "version-string")))))
 
 (defun cider--nrepl-version ()
   "Retrieve the underlying connection's nREPL version."
   (with-current-buffer (cider-current-repl)
     (when nrepl-versions
       (thread-first nrepl-versions
-        (nrepl-dict-get "nrepl")
-        (nrepl-dict-get "version-string")))))
+                    (nrepl-dict-get "nrepl")
+                    (nrepl-dict-get "version-string")))))
 
 (defun cider--babashka-version ()
   "Retrieve the underlying connection's Babashka version."
@@ -368,11 +451,21 @@ process buffer."
     (when nrepl-versions
       (nrepl-dict-get nrepl-versions "babashka.nrepl"))))
 
+(defun cider--nbb-nrepl-version ()
+  "Retrieve the underlying connection's nbb version.
+
+Note that this is currently not a real version number.
+But helps us know if this is a nbb repl, or not."
+  (with-current-buffer (cider-current-repl)
+    (when nrepl-versions
+      (nrepl-dict-get nrepl-versions "nbb-nrepl"))))
+
 (defun cider-runtime ()
   "Return the runtime of the nREPl server."
   (cond
    ((cider--clojure-version) 'clojure)
    ((cider--babashka-version) 'babashka)
+   ((cider--nbb-nrepl-version) 'nbb)
    (t 'generic)))
 
 (defun cider-runtime-clojure-p ()
@@ -410,8 +503,21 @@ about this buffer (like variable `cider-repl-type')."
               (plist-get nrepl-endpoint :host)
               (plist-get nrepl-endpoint :port))))))
 
+(defvar-local cider-connection-capabilities '()
+  "A list of some of the capabilities of this connection buffer.
+In other words - what assumptions we make about the runtime.
+This is more general than
+`cider-nrepl-op-supported-p' and `cider-library-present-p'.
+But does not need to replace them.")
+
+(defun cider-connection-has-capability-p (capability &optional conn-buf)
+  "Return non nil when the cider connection has CAPABILITY for CONN-BUF.
+By default it assumes the connection buffer is current."
+  (with-current-buffer (or conn-buf (current-buffer))
+    (member capability cider-connection-capabilities)))
+
 
-;;; Cider's Connection Management UI
+;;; Connection Management Commands
 
 (defun cider-quit (&optional repl)
   "Quit the CIDER connection associated with REPL.
@@ -437,9 +543,9 @@ entire session."
                    (sesman-browser-get 'object)
                    (cider-current-repl nil 'ensure)))
          (params (thread-first ()
-                   (cider--gather-connect-params repl)
-                   (plist-put :session-name (sesman-session-name-for-object 'CIDER repl))
-                   (plist-put :repl-buffer repl))))
+                               (cider--gather-connect-params repl)
+                               (plist-put :session-name (sesman-session-name-for-object 'CIDER repl))
+                               (plist-put :repl-buffer repl))))
     (cider--close-connection repl 'no-kill)
     (cider-nrepl-connect params)
     ;; need this to refresh sesman browser
@@ -460,7 +566,6 @@ REPL defaults to the current REPL."
                   (sesman-browser-get 'object)
                   (cider-current-repl nil 'ensure))))
     (message "%s" (cider--connection-info repl))))
-(define-obsolete-function-alias 'cider-display-connection-info 'cider-describe-connection "0.18.0")
 
 (defconst cider-nrepl-session-buffer "*cider-nrepl-session*")
 
@@ -512,33 +617,6 @@ REPL defaults to the current REPL."
   (sesman-more-recent-p (cdr session1) (cdr session2)))
 
 (declare-function cider-classpath-entries "cider-client")
-(cl-defmethod sesman-friendly-session-p ((_system (eql CIDER)) session)
-  "Check if SESSION is a friendly session."
-  (setcdr session (seq-filter #'buffer-live-p (cdr session)))
-  (when-let* ((repl (cadr session))
-              (proc (get-buffer-process repl))
-              (file (file-truename (or (buffer-file-name) default-directory))))
-    ;; With avfs paths look like /path/to/.avfs/path/to/some.jar#uzip/path/to/file.clj
-    (when (string-match-p "#uzip" file)
-      (let ((avfs-path (directory-file-name (expand-file-name (or (getenv "AVFSBASE")  "~/.avfs/")))))
-        (setq file (replace-regexp-in-string avfs-path "" file t t))))
-    (when (process-live-p proc)
-      (let* ((classpath (or (process-get proc :cached-classpath)
-                            (let ((cp (with-current-buffer repl
-                                        (cider-classpath-entries))))
-                              (process-put proc :cached-classpath cp)
-                              cp)))
-             (classpath-roots (or (process-get proc :cached-classpath-roots)
-                                  (let ((cp (thread-last classpath
-                                              (seq-filter (lambda (path) (not (string-match-p "\\.jar$" path))))
-                                              (mapcar #'file-name-directory)
-                                              (seq-remove  #'null))))
-                                    (process-put proc :cached-classpath-roots cp)
-                                    cp))))
-        (or (seq-find (lambda (path) (string-prefix-p path file))
-                      classpath)
-            (seq-find (lambda (path) (string-prefix-p path file))
-                      classpath-roots))))))
 
 (defvar cider-sesman-browser-map
   (let ((map (make-sparse-keymap)))
@@ -598,11 +676,11 @@ Fallback on `cider' command."
              (dolist (r repls)
                (cider-nrepl-connect
                 (thread-first ()
-                  (cider--gather-connect-params r)
-                  ;; server params (:port, :project-dir etc) have precedence
-                  (cider--gather-connect-params server-buf)
-                  (plist-put :session-name ses-name)
-                  (plist-put :repl-buffer r))))
+                              (cider--gather-connect-params r)
+                              ;; server params (:port, :project-dir etc) have precedence
+                              (cider--gather-connect-params server-buf)
+                              (plist-put :session-name ses-name)
+                              (plist-put :repl-buffer r))))
              (sesman-browser-revert-all 'CIDER)
              (message "Restarted CIDER %s session" ses-name))))
       ;; server-less session
@@ -610,9 +688,22 @@ Fallback on `cider' command."
         (cider--close-connection r 'no-kill)
         (cider-nrepl-connect
          (thread-first ()
-           (cider--gather-connect-params r)
-           (plist-put :session-name ses-name)
-           (plist-put :repl-buffer r)))))))
+                       (cider--gather-connect-params r)
+                       (plist-put :session-name ses-name)
+                       (plist-put :repl-buffer r)))))))
+
+(defun cider--ensure-spec-is-not-invokable (spec)
+  "Ensures SPEC cannot be invoked as a function.
+
+Invokeable specs are an Emacs 29 feature
+that we don't intend to use in this context."
+  (let ((spec-char (car spec))
+        (spec-value (cdr spec)))
+    `(,spec-char
+      .
+      ,(if (symbolp spec-value)
+           (prin1-to-string spec-value)
+         spec-value))))
 
 (defun cider-format-connection-params (template params)
   "Format PARAMS with TEMPLATE string.
@@ -636,7 +727,8 @@ removed."
                     default-directory))))
          (short-proj (file-name-nondirectory (directory-file-name dir)))
          (parent-dir (ignore-errors
-                       (thread-first dir file-name-directory
+                       (thread-first dir
+                                     file-name-directory
                                      directory-file-name file-name-nondirectory
                                      file-name-as-directory)))
          (long-proj (format "%s%s" (or parent-dir "") short-proj))
@@ -665,12 +757,13 @@ removed."
                   (?S . ,cljs-repl-type)))
          (ses-name (or (plist-get params :session-name)
                        (format-spec cider-session-name-template specs)))
-         (specs (append `((?s . ,ses-name)) specs)))
+         (specs (append `((?s . ,ses-name)) specs))
+         (specs (mapcar #'cider--ensure-spec-is-not-invokable specs)))
     (thread-last (format-spec template specs)
-      ;; remove extraneous separators
-      (replace-regexp-in-string "\\([:-]\\)[:-]+" "\\1")
-      (replace-regexp-in-string "\\(^[:-]\\)\\|\\([:-]$\\)" "")
-      (replace-regexp-in-string "[:-]\\([])*]\\)" "\\1"))))
+                 ;; remove extraneous separators
+                 (replace-regexp-in-string "\\([:-]\\)[:-]+" "\\1")
+                 (replace-regexp-in-string "\\(^[:-]\\)\\|\\([:-]$\\)" "")
+                 (replace-regexp-in-string "[:-]\\([])*]\\)" "\\1"))))
 
 (defun cider-make-session-name (params)
   "Create new session name given plist of connection PARAMS.
@@ -688,14 +781,21 @@ Session name can be customized with `cider-session-name-template'."
 ;;; REPL Buffer Init
 
 (defvar-local cider-cljs-repl-type nil
-  "The type of the ClojureScript runtime (Browser, Node, Figwheel, etc.)")
+  "The type of the ClojureScript runtime ('browser, 'node, 'figwheel, etc.).")
 
 (defvar-local cider-repl-type nil
   "The type of this REPL buffer, usually either clj or cljs.")
 
+(defvar-local cider-repl-cljs-upgrade-pending nil
+  "Is the cljs repl currently pending?")
+
 (defun cider-repl-type (repl-buffer)
   "Get REPL-BUFFER's type."
   (buffer-local-value 'cider-repl-type repl-buffer))
+
+(defun cider-cljs-pending-p (repl-buffer)
+  "Returns non nil when REPL-BUFFER is currently a pending cljs repl."
+  (buffer-local-value 'cider-repl-cljs-upgrade-pending repl-buffer))
 
 (defun cider-repl-type-for-buffer (&optional buffer)
   "Return the matching connection type (clj or cljs) for BUFFER.
@@ -705,7 +805,7 @@ For the REPL type use the function `cider-repl-type'."
   (with-current-buffer (or buffer (current-buffer))
     (cond
      ((derived-mode-p 'clojurescript-mode) 'cljs)
-     ((derived-mode-p 'clojurec-mode) 'multi)
+     ((derived-mode-p 'clojurec-mode) cider-clojurec-eval-destination)
      ((derived-mode-p 'clojure-mode) 'clj)
      (cider-repl-type))))
 
@@ -743,27 +843,35 @@ PARAMS is a plist as received by `cider-repl-create'."
     (let* ((proj-dir (plist-get params :project-dir))
            (host (plist-get params :host))
            (port (plist-get params :port))
-           (cljsp (member (plist-get params :repl-type) '(cljs pending-cljs)))
+           (type (plist-get params :repl-type))
            (scored-repls
-            (delq nil
-                  (mapcar (lambda (b)
-                            (let ((bparams (cider--gather-connect-params nil b)))
-                              (when (eq cljsp (member (plist-get bparams :repl-type)
-                                                      '(cljs pending-cljs)))
-                                (cons (buffer-name b)
-                                      (+
-                                       (if (equal proj-dir (plist-get bparams :project-dir)) 8 0)
-                                       (if (equal host (plist-get bparams :host)) 4 0)
-                                       (if (equal port (plist-get bparams :port)) 2 0))))))
-                          repls))))
-      (when scored-repls
-        (if (> (length scored-repls) 1)
-            (when (y-or-n-p "Dead REPLs exist.  Reuse? ")
-              (let ((sorted-repls (seq-sort (lambda (a b) (> (cdr a) (cdr b))) scored-repls)))
-                (get-buffer (completing-read "REPL to reuse: "
-                                             (mapcar #'car sorted-repls) nil t nil nil (caar sorted-repls)))))
-          (when (y-or-n-p (format "A dead REPL %s exists.  Reuse? " (caar scored-repls)))
-            (get-buffer (caar scored-repls))))))))
+            (mapcar (lambda (b)
+                      (let ((bparams (ignore-errors (cider--gather-connect-params nil b))))
+                        (when (eq type (plist-get bparams :repl-type))
+                          (cons b (+
+                                   (if (equal proj-dir (plist-get bparams :project-dir)) 8 0)
+                                   (if (equal host (plist-get bparams :host)) 4 0)
+                                   (if (equal port (plist-get bparams :port)) 2 0))))))
+                    repls))
+           (sorted-repls (mapcar #'car (seq-sort-by #'cdr #'> (delq nil scored-repls)))))
+      (cond ((null sorted-repls) nil)
+            ((and (= 1 (length sorted-repls))
+                  (eq cider-reuse-dead-repls 'prompt))
+             (if (y-or-n-p (format "A dead REPL %s exists.  Reuse buffer? " (car sorted-repls)))
+                 (car sorted-repls)
+               (and (y-or-n-p "Kill dead REPL buffer?")
+                    (kill-buffer (car sorted-repls))
+                    nil)))
+            ((and (< 1 (length sorted-repls))
+                  (memq cider-reuse-dead-repls '(prompt auto)))
+             (if (y-or-n-p "Dead REPL buffers exist.  Select one to reuse? ")
+                 (get-buffer (completing-read "REPL buffer to reuse: " (mapcar #'buffer-name sorted-repls)
+                                              nil t nil nil (car sorted-repls)))
+               (and (y-or-n-p "Kill all dead REPL buffers?")
+                    (mapc #'kill-buffer sorted-repls)
+                    nil)))
+            (cider-reuse-dead-repls ;; fallthrough for 'auto / 'any / other non-nil values
+             (car sorted-repls))))))
 
 (declare-function cider-default-err-handler "cider-eval")
 (declare-function cider-repl-mode "cider-repl")
@@ -781,7 +889,8 @@ function with the repl buffer set as current."
   ;; Connection might not have been set as yet. Please don't send requests in
   ;; this function, but use cider--connected-handler instead.
   (let ((buffer (or (plist-get params :repl-buffer)
-                    (cider--choose-reusable-repl-buffer params)
+                    (and cider-reuse-dead-repls
+                         (cider--choose-reusable-repl-buffer params))
                     (get-buffer-create (generate-new-buffer-name "*cider-uninitialized-repl*"))))
         (ses-name (or (plist-get params :session-name)
                       (cider-make-session-name params))))
@@ -797,11 +906,14 @@ function with the repl buffer set as current."
             mode-name nil
             cider-session-name ses-name
             nrepl-project-dir (plist-get params :project-dir)
-            ;; REPLs start with clj and then "upgrade" to a different type
+            ;; Cljs repls are pending until they are upgraded. See cider-repl--state-handler
             cider-repl-type (plist-get params :repl-type)
+            cider-repl-cljs-upgrade-pending (plist-get params :cider-repl-cljs-upgrade-pending)
             ;; ran at the end of cider--connected-handler
             cider-repl-init-function (plist-get params :repl-init-function)
             cider-launch-params params)
+      (when-let ((type (plist-get params :cljs-repl-type)))
+        (setq cider-cljs-repl-type type))
       (cider-repl-reset-markers)
       (add-hook 'nrepl-response-handler-functions #'cider-repl--state-handler nil 'local)
       (add-hook 'nrepl-connected-hook #'cider--connected-handler nil 'local)
@@ -853,22 +965,72 @@ no linked session or there is no REPL of TYPE within the current session."
     (cond ((null buffer-repl-type) nil)
           ((or (null type) (eq type 'multi) (eq type 'any)) t)
           ((listp type) (member buffer-repl-type type))
-          (t (string= type buffer-repl-type)))))
+          (t
+           (or (string= type buffer-repl-type)
+               (let ((capabilities
+                      (buffer-local-value 'cider-connection-capabilities buffer)))
+                 (cond ((listp type)
+                        (cl-some (lambda (it) (member it capabilities)) type))
+                       (t (member type capabilities)))))))))
+
+(defun cider--get-host-from-session (session)
+  "Returns the host associated with SESSION."
+  (plist-get (cider--gather-session-params session)
+             :host))
+
+(defun cider--make-sessions-list-with-hosts (sessions)
+  "Makes a list of SESSIONS and their hosts.
+Returns a list of the form ((session1 host1) (session2 host2) ...)."
+  (mapcar (lambda (session)
+            (list session (cider--get-host-from-session session)))
+          sessions))
+
+(defun cider--get-sessions-with-same-host (session sessions)
+  "Returns a list of SESSIONS with the same host as SESSION."
+  (mapcar #'car
+          (seq-filter (lambda (x)
+                        (string-equal (cadr x)
+                                      (cider--get-host-from-session session)))
+                      (cider--make-sessions-list-with-hosts sessions))))
+
+(defun cider--extract-connections (sessions)
+  "Returns a flattened list of all session buffers in SESSIONS."
+  (cl-reduce (lambda (x y)
+               (append x (cdr y)))
+             sessions
+             :initial-value '()))
 
 (defun cider-repls (&optional type ensure)
   "Return cider REPLs of TYPE from the current session.
-If TYPE is nil or multi, return all repls.  If TYPE is a list of types,
+If TYPE is nil or multi, return all REPLs.  If TYPE is a list of types,
 return only REPLs of type contained in the list.  If ENSURE is non-nil,
 throw an error if no linked session exists."
   (let ((type (cond
                ((listp type)
                 (mapcar #'cider-maybe-intern type))
                ((cider-maybe-intern type))))
-        (repls (cdr (if ensure
-                        (sesman-ensure-session 'CIDER)
-                      (sesman-current-session 'CIDER)))))
+        (repls (pcase cider-merge-sessions
+                 ('host
+                  (if ensure
+                      (or (cider--extract-connections (cider--get-sessions-with-same-host
+                                                       (sesman-current-session 'CIDER)
+                                                       (sesman-current-sessions 'CIDER)))
+                          (user-error "No linked %s sessions" 'CIDER))
+                    (cider--extract-connections (cider--get-sessions-with-same-host
+                                                 (sesman-current-session 'CIDER)
+                                                 (sesman-current-sessions 'CIDER)))))
+                 ('project
+                  (if ensure
+                      (or (cider--extract-connections (sesman-current-sessions 'CIDER))
+                          (user-error "No linked %s sessions" 'CIDER))
+                    (cider--extract-connections (sesman-current-sessions 'CIDER))))
+                 (_ (cdr (if ensure
+                             (sesman-ensure-session 'CIDER)
+                           (sesman-current-session 'CIDER)))))))
     (or (seq-filter (lambda (b)
-                      (cider--match-repl-type type b))
+                      (unless
+                          (cider-cljs-pending-p b)
+                        (cider--match-repl-type type b)))
                     repls)
         (when ensure
           (cider--no-repls-user-error type)))))
@@ -912,55 +1074,13 @@ session."
 (defalias 'cider-map-connections #'cider-map-repls)
 (defalias 'cider-connection-type-for-buffer #'cider-repl-type-for-buffer)
 
-
-;; Deprecation after #2324
+;; Deprecated after #2324 (introduction of sesman)
 
-(define-obsolete-function-alias 'cider-current-repl-buffer 'cider-current-repl "0.18")
-(define-obsolete-function-alias 'cider-repl-buffers 'cider-repls "0.18")
-(define-obsolete-function-alias 'cider-current-session 'cider-nrepl-eval-session "0.18")
-(define-obsolete-function-alias 'cider-current-tooling-session 'cider-nrepl-tooling-session "0.18")
-(define-obsolete-function-alias 'cider-display-connection-info 'cider-describe-connection "0.18")
-(define-obsolete-function-alias 'nrepl-connection-buffer-name 'nrepl-repl-buffer-name "0.18")
-(define-obsolete-function-alias 'cider-repl-set-type 'cider-set-repl-type "0.18")
-
-(make-obsolete 'cider-assoc-buffer-with-connection 'sesman-link-with-buffer "0.18")
-(make-obsolete 'cider-assoc-project-with-connection 'sesman-link-with-project "0.18")
-(make-obsolete 'cider-change-buffers-designation nil "0.18")
-(make-obsolete 'cider-clear-buffer-local-connection nil "0.18")
-(make-obsolete 'cider-close-nrepl-session 'cider-quit "0.18")
-(make-obsolete 'cider-create-sibling-cljs-repl 'cider-connect-sibling-cljs "0.18")
-(make-obsolete 'cider-current-messages-buffer nil "0.18")
-(make-obsolete 'cider-default-connection "see sesman." "0.18")
-(make-obsolete 'cider-extract-designation-from-current-repl-buffer nil "0.18")
-(make-obsolete 'cider-find-connection-buffer-for-project-directory 'sesman-current-sessions "0.18")
-(make-obsolete 'cider-find-reusable-repl-buffer nil "0.18")
-(make-obsolete 'cider-make-connection-default "see sesman." "0.18")
-(make-obsolete 'cider-other-connection nil "0.18")
-(make-obsolete 'cider-project-connections 'sesman-current-sessions "0.18")
-(make-obsolete 'cider-project-connections-types nil "0.18")
-(make-obsolete 'cider-prompt-for-project-on-connect nil "0.18")
-(make-obsolete 'cider-read-connection `sesman-ask-for-session "0.18")
-(make-obsolete 'cider-replicate-connection nil "0.18")
-(make-obsolete 'cider-request-dispatch "see sesman." "0.18")
-(make-obsolete 'cider-rotate-default-connection "see sesman." "0.18")
-(make-obsolete 'cider-toggle-buffer-connection nil "0.18")
-(make-obsolete 'cider-toggle-request-dispatch nil "0.18")
-(make-obsolete 'nrepl-connection-buffer-name-template 'nrepl-repl-buffer-name-template "0.18")
-(make-obsolete 'nrepl-create-client-buffer-function nil "0.18")
-(make-obsolete 'nrepl-post-client-callback nil "0.18")
-(make-obsolete 'nrepl-prompt-to-kill-server-buffer-on-quit nil "0.18")
-(make-obsolete 'nrepl-use-this-as-repl-buffer nil "0.18")
-
-;; connection manager
-(make-obsolete 'cider-client-name-repl-type "see sesman." "0.18")
-(make-obsolete 'cider-connection-browser "see sesman." "0.18")
-(make-obsolete 'cider-connections-buffer-mode "see sesman." "0.18")
-(make-obsolete 'cider-connections-buffer-mode-map "see sesman." "0.18")
-(make-obsolete 'cider-connections-close-connection "see sesman." "0.18")
-(make-obsolete 'cider-connections-goto-connection "see sesman." "0.18")
-(make-obsolete 'cider-connections-make-default "see sesman." "0.18")
-(make-obsolete 'cider-display-connected-message "see sesman." "0.18")
-(make-obsolete 'cider-project-name "see sesman." "0.18")
+(define-obsolete-function-alias 'cider-current-repl-buffer #'cider-current-repl "0.18")
+(define-obsolete-function-alias 'cider-repl-buffers #'cider-repls "0.18")
+(define-obsolete-function-alias 'cider-current-session #'cider-nrepl-eval-session "0.18")
+(define-obsolete-function-alias 'cider-current-tooling-session #'cider-nrepl-tooling-session "0.18")
+(define-obsolete-function-alias 'nrepl-connection-buffer-name #'nrepl-repl-buffer-name "0.18")
 
 (provide 'cider-connection)
 

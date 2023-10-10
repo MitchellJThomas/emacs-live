@@ -1,6 +1,6 @@
 ;;; cider-debug.el --- CIDER interaction with the cider.debug nREPL middleware  -*- lexical-binding: t; -*-
 
-;; Copyright © 2015-2020 Bozhidar Batsov, Artur Malabarba and CIDER contributors
+;; Copyright © 2015-2023 Bozhidar Batsov, Artur Malabarba and CIDER contributors
 
 ;; Author: Artur Malabarba <bruce.connor.am@gmail.com>
 
@@ -37,7 +37,6 @@
 (require 'cider-inspector)
 (require 'cider-util)
 (require 'cider-common)
-(require 'cider-compat)
 (require 'nrepl-client) ; `nrepl--mark-id-completed'
 (require 'nrepl-dict)
 
@@ -53,13 +52,11 @@
   '((((class color) (background light)) :background "grey80")
     (((class color) (background dark))  :background "grey30"))
   "Face used to mark code being debugged."
-  :group 'cider-debug
   :package-version '(cider . "0.9.1"))
 
 (defface cider-debug-prompt-face
   '((t :underline t :inherit font-lock-builtin-face))
   "Face used to highlight keys in the debug prompt."
-  :group 'cider-debug
   :package-version '(cider . "0.10.0"))
 
 (defface cider-enlightened-face
@@ -69,14 +66,12 @@
      ;; "#dd0" is a dimmer yellow.
      :box (:color "#990" :line-width -1)))
   "Face used to mark enlightened sexps and their return values."
-  :group 'cider-debug
   :package-version '(cider . "0.11.0"))
 
 (defface cider-enlightened-local-face
   '((((class color) (background light)) :weight bold :foreground "darkorange")
     (((class color) (background dark))  :weight bold :foreground "yellow"))
   "Face used to mark enlightened locals (not their values)."
-  :group 'cider-debug
   :package-version '(cider . "0.11.0"))
 
 (defcustom cider-debug-prompt 'overlay
@@ -89,11 +84,10 @@ If nil, don't list available keys at all."
                  (const :tag "Show above function" overlay)
                  (const :tag "Show in both places" t)
                  (const :tag "Don't list keys" nil))
-  :group 'cider-debug
   :package-version '(cider . "0.10.0"))
 
 (defcustom cider-debug-use-overlays t
-  "Whether to higlight debugging information with overlays.
+  "Whether to highlight debugging information with overlays.
 Takes the same possible values as `cider-use-overlays', but only applies to
 values displayed during debugging sessions.
 To control the overlay that lists possible keys above the current function,
@@ -101,7 +95,6 @@ configure `cider-debug-prompt' instead."
   :type '(choice (const :tag "End of line" t)
                  (const :tag "Bottom of screen" nil)
                  (const :tag "Both" both))
-  :group 'cider-debug
   :package-version '(cider . "0.9.1"))
 
 (make-obsolete 'cider-debug-print-length 'cider-debug-print-options "0.20")
@@ -110,29 +103,24 @@ configure `cider-debug-prompt' instead."
 
 
 ;;; Implementation
+(declare-function cider-browse-ns--combined-vars-with-meta "cider-browse-ns")
+
 (defun cider-browse-instrumented-defs ()
   "List all instrumented definitions."
   (interactive)
   (if-let* ((all (thread-first (cider-nrepl-send-sync-request '("op" "debug-instrumented-defs"))
-                   (nrepl-dict-get "list"))))
+                               (nrepl-dict-get "list"))))
       (with-current-buffer (cider-popup-buffer cider-browse-ns-buffer t)
         (let ((inhibit-read-only t))
-          (erase-buffer)
           (dolist (list all)
             (let* ((ns (car list))
-                   (ns-vars-with-meta (cider-sync-request:ns-vars-with-meta ns))
-                   ;; seq of metadata maps of the instrumented vars
-                   (instrumented-meta (mapcar (apply-partially #'nrepl-dict-get ns-vars-with-meta)
-                                              (cdr list))))
+                   (ns-vars-with-meta (cider-browse-ns--combined-vars-with-meta ns))
+                   (instrumented-meta (nrepl-dict-filter (lambda (k _)
+                                                           (member k list))
+                                                         ns-vars-with-meta)))
               (cider-browse-ns--list (current-buffer) ns
-                                     (seq-mapn #'cider-browse-ns--properties
-                                               (cdr list)
-                                               instrumented-meta)
-
-                                     ns 'noerase)
-              (goto-char (point-max))
-              (insert "\n"))))
-        (goto-char (point-min)))
+                                     instrumented-meta
+                                     ns)))))
     (message "No currently instrumented definitions")))
 
 (defun cider--debug-response-handler (response)
@@ -154,9 +142,9 @@ configure `cider-debug-prompt' instead."
   "Initialize a connection with the cider.debug middleware."
   (cider-nrepl-send-request
    (thread-last
-       (map-merge 'list
-                  '(("op" "init-debugger"))
-                  (cider--nrepl-print-request-map fill-column))
+     (map-merge 'list
+                '(("op" "init-debugger"))
+                (cider--nrepl-print-request-map fill-column))
      (seq-mapcat #'identity))
    #'cider--debug-response-handler))
 
@@ -193,7 +181,6 @@ Set by `cider--turn-on-debug-mode'.")
   "If non-nil, local variables are displayed while debugging.
 Can be toggled at any time with `\\[cider-debug-toggle-locals]'."
   :type 'boolean
-  :group 'cider-debug
   :package-version '(cider . "0.10.0"))
 
 (defcustom cider-debug-prompt-commands
@@ -213,18 +200,19 @@ Can be toggled at any time with `\\[cider-debug-toggle-locals]'."
     (?t "trace" "trace")
     (?q "quit" "quit"))
   "A list of debugger command specs.
-Specs are in the format (KEY COMMAND-NAME DISPLAY-NAME?)
-where KEY is a character which is mapped to the command
-COMMAND-NAME is a valid debug command to be passed to the cider-nrepl middleware
-DISPLAY-NAME is the string displayed in the debugger overlay
 
-If DISPLAY-NAME is nil, that command is hidden from the overlay but still callable.
-The rest of the commands are displayed in the same order as this list."
+Specs are in the format (KEY COMMAND-NAME DISPLAY-NAME?)  where KEY is a
+character which is mapped to the command COMMAND-NAME is a valid debug
+command to be passed to the cider-nrepl middleware DISPLAY-NAME is the
+string displayed in the debugger overlay
+
+If DISPLAY-NAME is nil, that command is hidden from the overlay but still
+callable.  The rest of the commands are displayed in the same order as this
+list."
   :type '(alist :key-type character
                 :value-type (list
                              (string :tag "command name")
                              (choice (string :tag "display name") nil)))
-  :group 'cider-debug
   :package-version '(cider . "0.24.0"))
 
 (defun cider--debug-format-locals-list (locals)
@@ -242,7 +230,7 @@ Each element of LOCALS should be a list of at least two elements."
     ""))
 
 (defun cider--debug-propertize-prompt-commands ()
-  "In-place formatting of the command display names for the `cider-debug-prompt' overlay."
+  "In-place format the command display names for the `cider-debug-prompt' overlay."
   (mapc (lambda (spec)
           (cl-destructuring-bind (char _cmd disp-name) spec
             (when-let* ((pos (cl-position char disp-name)))
@@ -340,7 +328,7 @@ of `cider-interactive-eval' in debug sessions."
   "Mode active during debug sessions.
 In order to work properly, this mode must be activated by
 `cider--turn-on-debug-mode'."
-  nil " DEBUG" '()
+  :init-value nil :lighter " DEBUG" :keymap '()
   (if cider--debug-mode
       (if cider--debug-mode-response
           (nrepl-dbind-response cider--debug-mode-response (input-type)
@@ -407,13 +395,14 @@ In order to work properly, this mode must be activated by
   (cider--debug-mode-redisplay))
 
 (easy-menu-define cider-debug-mode-menu cider--debug-mode-map
-  "Menu for CIDER debug mode"
+  "Menu for CIDER debug mode."
   `("CIDER Debugger"
     ["Next step" (cider-debug-mode-send-reply ":next") :keys "n"]
     ["Continue" (cider-debug-mode-send-reply ":continue") :keys "c"]
     ["Continue non-stop" (cider-debug-mode-send-reply ":continue-all") :keys "C"]
     ["Move out of sexp" (cider-debug-mode-send-reply ":out") :keys "o"]
     ["Forced move out of sexp" (cider-debug-mode-send-reply ":out" nil true) :keys "O"]
+    ["Move to current position" (cider-debug-mode-send-reply ":here") :keys "h"]
     ["Quit" (cider-debug-mode-send-reply ":quit") :keys "q"]
     "--"
     ["Evaluate in current scope" (cider-debug-mode-send-reply ":eval") :keys "e"]
@@ -493,7 +482,7 @@ REASON is a keyword describing why this buffer was necessary."
                     reason
                     ".")
             (fill-paragraph))
-          (cider--font-lock-ensure)
+          (font-lock-ensure)
           (set-buffer-modified-p nil))))
     (switch-to-buffer buffer-name)
     (goto-char (point-min))))
@@ -503,6 +492,17 @@ REASON is a keyword describing why this buffer was necessary."
   (when-let* ((limit (ignore-errors (save-excursion (up-list) (point)))))
     (search-forward-regexp (concat "\\_<" (regexp-quote key) "\\_>")
                            limit 'noerror)))
+
+(defun cider--debug-skip-ignored-forms ()
+  "Skip past all forms ignored with #_ reader macro."
+  ;; Logic taken from `clojure--search-comment-macro-internal'
+  (while (looking-at (concat "[ ,\r\t\n]*" clojure--comment-macro-regexp))
+    (let ((md (match-data))
+          (start (match-beginning 1)))
+      (goto-char start)
+      ;; Count how many #_ we got and step by that many sexps
+      (clojure-forward-logical-sexp
+       (count-matches (rx "#_") (elt md 0) (elt md 1))))))
 
 (defun cider--debug-move-point (coordinates)
   "Place point on after the sexp specified by COORDINATES.
@@ -578,7 +578,9 @@ key of a map, and it means \"go to the value associated with this key\"."
                           (pop coordinates))))))
               ;; If that extra pop was the last coordinate, this represents the
               ;; entire #(...), so we should move back out.
-              (backward-up-list))))
+              (backward-up-list)))
+          ;; Finally skip past all #_ forms
+          (cider--debug-skip-ignored-forms))
         ;; Place point at the end of instrumented sexp.
         (clojure-forward-logical-sexp 1))
     ;; Avoid throwing actual errors, since this happens on every breakpoint.
@@ -760,7 +762,7 @@ The boolean value of FORCE will be sent in the reply."
           (progn ;; Get to the proper line & column in the file
             (forward-line (1- (- line (line-number-at-pos))))
             (move-to-column column))
-        (beginning-of-defun))
+        (beginning-of-defun-raw))
       ;; Is HERE inside the sexp being debugged?
       (when (or (< here (point))
                 (save-excursion

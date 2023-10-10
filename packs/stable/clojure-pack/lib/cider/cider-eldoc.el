@@ -1,11 +1,11 @@
 ;;; cider-eldoc.el --- eldoc support for Clojure -*- lexical-binding: t -*-
 
 ;; Copyright © 2012-2013 Tim King, Phil Hagelberg, Bozhidar Batsov
-;; Copyright © 2013-2020 Bozhidar Batsov, Artur Malabarba and CIDER contributors
+;; Copyright © 2013-2023 Bozhidar Batsov, Artur Malabarba and CIDER contributors
 ;;
 ;; Author: Tim King <kingtim@gmail.com>
 ;;         Phil Hagelberg <technomancy@gmail.com>
-;;         Bozhidar Batsov <bozhidar@batsov.com>
+;;         Bozhidar Batsov <bozhidar@batsov.dev>
 ;;         Artur Malabarba <bruce.connor.am@gmail.com>
 ;;         Hugo Duncan <hugo@hugoduncan.org>
 ;;         Steve Purcell <steve@sanityinc.com>
@@ -33,8 +33,9 @@
 
 (require 'cider-client)
 (require 'cider-common) ; for cider-symbol-at-point
+(require 'cider-completion-context)
+(require 'cider-docstring)
 (require 'subr-x)
-(require 'cider-compat)
 (require 'cider-util)
 (require 'nrepl-dict)
 
@@ -46,7 +47,7 @@
   "Extra commands to be added to eldoc's safe commands list.")
 
 (defcustom cider-eldoc-max-num-sexps-to-skip 30
-  "The maximum number of sexps to skip while searching the beginning of current sexp."
+  "Max number of sexps to skip while searching the beginning of current sexp."
   :type 'integer
   :group 'cider
   :package-version '(cider . "0.10.1"))
@@ -108,7 +109,8 @@ mapping `cider-eldoc-ns-function' on it returns an empty list."
      ((and cider-eldoc-max-class-names-to-display
            (> eldoc-class-names-length cider-eldoc-max-class-names-to-display))
       (format "(%s & %s more)"
-              (thread-first eldoc-class-names
+              (thread-first
+                eldoc-class-names
                 (seq-take cider-eldoc-max-class-names-to-display)
                 (string-join " ")
                 (cider-propertize 'ns))
@@ -117,7 +119,8 @@ mapping `cider-eldoc-ns-function' on it returns an empty list."
      ;; format the whole list but add surrounding parentheses
      ((> eldoc-class-names-length 1)
       (format "(%s)"
-              (thread-first eldoc-class-names
+              (thread-first
+                eldoc-class-names
                 (string-join " ")
                 (cider-propertize 'ns))))
 
@@ -213,8 +216,14 @@ THING is the variable name.  ELDOC-INFO is a p-list containing the eldoc
 information."
   (let* ((ns (lax-plist-get eldoc-info "ns"))
          (symbol (lax-plist-get eldoc-info "symbol"))
-         (docstring (lax-plist-get eldoc-info "docstring"))
-         (formatted-var (cider-eldoc-format-thing ns symbol thing 'var)))
+         (docstring (or (cider--render-docstring-first-sentence eldoc-info)
+                        (cider--render-docstring eldoc-info)
+                        (cider-docstring--dumb-trim (lax-plist-get eldoc-info "docstring"))))
+         ;; if it's a single class (and not multiple class candidates), that's it
+         (maybe-class (car (lax-plist-get eldoc-info "class")))
+         (formatted-var (or (when maybe-class
+                              (cider-propertize maybe-class 'var))
+                            (cider-eldoc-format-thing ns symbol thing 'var))))
     (when docstring
       (cider-eldoc-format-sym-doc formatted-var ns docstring))))
 
@@ -227,6 +236,22 @@ arglists.  ELDOC-INFO is a p-list containing the eldoc information."
         (arglists (lax-plist-get eldoc-info "arglists")))
     (format "%s: %s"
             (cider-eldoc-format-thing ns symbol thing 'fn)
+            (cider-eldoc-format-arglist arglists pos))))
+
+(defun cider-eldoc-format-special-form (thing pos eldoc-info)
+  "Return the formatted eldoc string for a special-form.
+THING is the special form's name.  POS is the argument index of the
+special-form's arglists.  ELDOC-INFO is a p-list containing the eldoc
+information."
+  (let* ((ns (lax-plist-get eldoc-info "ns"))
+         (special-form-symbol (lax-plist-get eldoc-info "symbol"))
+         (arglists (mapcar (lambda (arglist)
+                             (if (equal (car arglist) special-form-symbol)
+                                 (cdr arglist)
+                               arglist))
+                           (lax-plist-get eldoc-info "arglists"))))
+    (format "%s: %s"
+            (cider-eldoc-format-thing ns special-form-symbol thing 'fn)
             (cider-eldoc-format-arglist arglists pos))))
 
 (defun cider-highlight-args (arglist pos)
@@ -287,7 +312,7 @@ if the maximum number of sexps to skip is exceeded."
             (error))
           (while
               (let ((p (point)))
-                (forward-sexp -1)
+                (clojure-backward-logical-sexp 1)
                 (when (< (point) p)
                   (setq num-skipped-sexps
                         (unless (and cider-eldoc-max-num-sexps-to-skip
@@ -306,12 +331,13 @@ if the maximum number of sexps to skip is exceeded."
 (defun cider-eldoc-thing-type (eldoc-info)
   "Return the type of the ELDOC-INFO being displayed by eldoc.
 It can be a function or var now."
-  (pcase (lax-plist-get eldoc-info "type")
-    ("function" 'fn)
-    ("special-form" 'special-form)
-    ("macro" 'macro)
-    ("method" 'method)
-    ("variable" 'var)))
+  (or (pcase (lax-plist-get eldoc-info "type")
+        ("function" 'fn)
+        ("special-form" 'special-form)
+        ("macro" 'macro)
+        ("method" 'method)
+        ("variable" 'var))
+      'fn))
 
 (defun cider-eldoc-info-at-point ()
   "Return eldoc info at point.
@@ -347,7 +373,7 @@ Then go back to the point and return its eldoc."
 
 (defun cider-eldoc-info-in-current-sexp ()
   "Return eldoc information from the sexp.
-If `cider-eldoc-display-for-symbol-at-poin' is non-nil and
+If `cider-eldoc-display-for-symbol-at-point' is non-nil and
 the symbol at point has a valid eldoc available, return that.
 Otherwise return the eldoc of the first symbol of the sexp."
   (or (when cider-eldoc-display-for-symbol-at-point
@@ -364,7 +390,7 @@ Otherwise return the eldoc of the first symbol of the sexp."
     (_ thing)))
 
 (defun cider-eldoc-info (thing)
-  "Return the info for THING.
+  "Return the info for THING (as string).
 This includes the arglist and ns and symbol name (if available)."
   (let ((thing (cider-eldoc--convert-ns-keywords thing)))
     (when (and (cider-nrepl-op-supported-p "eldoc")
@@ -392,7 +418,7 @@ This includes the arglist and ns and symbol name (if available)."
        ;; generic case
        (t (if (equal thing (car cider-eldoc-last-symbol))
               (cadr cider-eldoc-last-symbol)
-            (when-let* ((eldoc-info (cider-sync-request:eldoc thing)))
+            (when-let* ((eldoc-info (cider-sync-request:eldoc thing nil nil (cider-completion-get-context t))))
               (let* ((arglists (nrepl-dict-get eldoc-info "eldoc"))
                      (docstring (nrepl-dict-get eldoc-info "docstring"))
                      (type (nrepl-dict-get eldoc-info "type"))
@@ -407,13 +433,19 @@ This includes the arglist and ns and symbol name (if available)."
                                          name
                                        (format ".%s" member)))
                      (eldoc-plist (list "ns" ns-or-class
+                                        "class" class
                                         "symbol" name-or-member
                                         "arglists" arglists
                                         "docstring" docstring
+                                        "doc-fragments" (nrepl-dict-get eldoc-info "doc-fragments")
+                                        "doc-first-sentence-fragments" (nrepl-dict-get eldoc-info
+                                                                                       "doc-first-sentence-fragments")
+                                        "doc-block-tags-fragments" (nrepl-dict-get eldoc-info
+                                                                                   "doc-block-tags-fragments")
                                         "type" type)))
                 ;; add context dependent args if requested by defcustom
                 ;; do not cache this eldoc info to avoid showing info
-                                        ;: of the previous context
+                ;; of the previous context
                 (if cider-eldoc-display-context-dependent-info
                     (cond
                      ;; add inputs of datomic query
@@ -448,10 +480,10 @@ Only useful for interop forms.  Clojure forms would be returned unchanged."
                             "inputs")))
         (if query-inputs
             (thread-first
-                (thread-last arglists
-                  (car)
-                  (remove "&")
-                  (remove "inputs"))
+              (thread-last arglists
+                           (car)
+                           (remove "&")
+                           (remove "inputs"))
               (append (car query-inputs))
               (list))
           arglists))
@@ -469,9 +501,12 @@ Only useful for interop forms.  Clojure forms would be returned unchanged."
            (pos (lax-plist-get sexp-eldoc-info "pos"))
            (thing (lax-plist-get sexp-eldoc-info "thing")))
       (when eldoc-info
-        (if (eq (cider-eldoc-thing-type eldoc-info) 'var)
-            (cider-eldoc-format-variable thing eldoc-info)
-          (cider-eldoc-format-function thing pos eldoc-info))))))
+        (cond
+         ((eq (cider-eldoc-thing-type eldoc-info) 'var)
+          (cider-eldoc-format-variable thing eldoc-info))
+         ((eq (cider-eldoc-thing-type eldoc-info) 'special-form)
+          (cider-eldoc-format-special-form thing pos eldoc-info))
+         (t (cider-eldoc-format-function thing pos eldoc-info)))))))
 
 (defun cider-eldoc-setup ()
   "Setup eldoc in the current buffer.

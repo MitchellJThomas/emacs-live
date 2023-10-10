@@ -12,7 +12,8 @@ automatically injects this middleware and other dependencies as required.
 NOTE: In the past, if you were setting up CIDER, you might have had to
 modify `profiles.clj` or `profile.boot`. CIDER now handles
 everything automatically and you don't need to add anything
-special to these files. The same is true of your `deps.edn` file.
+special to these files. The same is true of your `deps.edn` file and
+your `build.gradle` (as of Clojurephant 0.7.0-alpha.6).
 
 If you prefer a standalone REPL, you will need to invoke
 `cider-connect` instead of `cider-jack-in` and manually add the
@@ -31,14 +32,14 @@ Use the convenient plugin for defaults, either in your project's
 
 [source,clojure]
 ----
-:plugins [[cider/cider-nrepl "x.y.z"]]
+:plugins [[cider/cider-nrepl "0.39.0"]]
 ----
 
 A minimal `profiles.clj` for CIDER would be:
 
 [source,clojure]
 ----
-{:repl {:plugins [[cider/cider-nrepl "0.25.2"]]}}
+{:repl {:plugins [[cider/cider-nrepl "0.39.0"]]}}
 ----
 
 WARNING: Be careful not to place this in the `:user` profile, as this way CIDER's
@@ -58,7 +59,7 @@ all of their projects using a `~/.boot/profile.boot` file like so:
 (require 'boot.repl)
 
 (swap! boot.repl/*default-dependencies*
-       concat '[[cider/cider-nrepl "0.25.2"]])
+       concat '[[cider/cider-nrepl "0.39.0"]])
 
 (swap! boot.repl/*default-middleware*
        conj 'cider.nrepl/cider-middleware)
@@ -75,19 +76,40 @@ run `cider-connect` or `cider-connect-cljs`.
 
 [source,clojure]
 ----
-  :cider-clj {:extra-deps {cider/cider-nrepl {:mvn/version "0.22.4"}}
+  :cider-clj {:extra-deps {cider/cider-nrepl {:mvn/version "0.39.0"}}
               :main-opts ["-m" "nrepl.cmdline" "--middleware" "[cider.nrepl/cider-middleware]"]}
 
   :cider-cljs {:extra-deps {org.clojure/clojurescript {:mvn/version "1.10.339"}
-                            cider/cider-nrepl {:mvn/version "0.22.4"}
-                            cider/piggieback {:mvn/version "0.5.1"}}
+                            cider/cider-nrepl {:mvn/version "0.39.0"}
+                            cider/piggieback {:mvn/version "0.5.3"}}
                :main-opts ["-m" "nrepl.cmdline" "--middleware"
                            "[cider.nrepl/cider-middleware,cider.piggieback/wrap-cljs-repl]"]}
 ----
 
+NOTE: the suggested ClojureScript setup is apt for e.g. library development, but not for frontend development.
+For those cases, you may want to check out our xref:cljs/shadow-cljs.adoc#using-cider-connect-cljs[shadow-cljs]
+or xref:cljs/figwheel.adoc#clojure-cli-setup[figwheel] setups instead.
+
 === Using Gradle
 
-NOTE: This section is currently a stub. Contributions welcome!
+NOTE: Make sure you're using https://github.com/clojurephant/clojurephant[Clojurephant] 0.4.0 or newer.
+
+.build.gradle
+[source, groovy]
+----
+dependencies {
+  devImplementation 'nrepl:nrepl:0.9.0'
+  devImplementation 'cider:cider-nrepl:0.28.5'
+}
+
+tasks.named('clojureRepl') {
+  middleware = ['cider.nrepl/cider-middleware']
+}
+----
+
+You can then launch the nREPL server from the command line via: `./gradlew clojureRepl`.
+
+For more information, see the https://clojurephant.dev[Clojurephant docs].
 
 === Using Maven
 

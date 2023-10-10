@@ -1,4 +1,4 @@
-;;; gh-issue-comments.el --- issue comments api for github
+;;; gh-issue-comments.el --- issue comments api for github -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2014 Travis Thieman
 
@@ -31,9 +31,6 @@
 ;; (gh-issue-comments-new api "user" "repo" "issue id" my-comment)
 
 ;;; Code:
-
-(eval-when-compile
-  (require 'cl))
 
 (require 'eieio)
 
